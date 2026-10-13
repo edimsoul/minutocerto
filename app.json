@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "MinutoCerto",
+    "slug": "minutocerto",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "icon": "./assets/icon.png",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/840ccf05-0b58-40a1-b612-a83a38ca3f76",
+      "checkAutomatically": "ON_ERROR_RECOVERY",
+      "fallbackToCacheTimeout": 0
+    },
+    "android": {
+      "package": "com.minutocerto.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#10212E"
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "840ccf05-0b58-40a1-b612-a83a38ca3f76"
+      }
+    },
+    "plugins": [
+      "expo-status-bar",
+      "expo-sharing",
+      "expo-secure-store",
+      "expo-font",
+      "expo-status-bar",
+      "expo-sharing",
+      "expo-secure-store",
+      "expo-updates",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "O MinutoCerto usa a câmera para ler o QR Code dos brinquedos.",
+          "recordAudioAndroid": false
+        }
+      ]
+    ]
+  }
+}
