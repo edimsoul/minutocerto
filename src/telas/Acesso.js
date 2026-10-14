@@ -6,6 +6,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Crypto from 'expo-crypto';
 import { hashSenha, gravarCred } from '../armazenamento';
 import CampoSenha from '../componentes/CampoSenha';
+import CartoesSeguranca from '../componentes/CartoesSeguranca';
 import { s } from '../estilos';
 import { cor } from '../tema';
 
@@ -125,6 +126,10 @@ export default function Acesso({ config, setConfig }) {
       <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.verde }]} onPress={salvar}>
         <Text style={s.botaoGrandeTxt}>Salvar</Text>
       </TouchableOpacity>
+
+      {/* Digital e e-mail de recuperação */}
+      <View style={{ height: 14 }} />
+      <CartoesSeguranca />
     </ScrollView>
   );
 }
