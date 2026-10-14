@@ -5,9 +5,10 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Crypto from 'expo-crypto';
+import * as SecureStore from 'expo-secure-store';
 import { hashSenha, gravarCred } from '../armazenamento';
 import CampoSenha from '../componentes/CampoSenha';
-import { digitalDisponivel, digitalAtiva, pedirDigital } from '../biometria';
+import { digitalDisponivel, digitalAtiva, definirDigital, pedirDigital } from '../biometria';
 import { pedirCodigo, confirmarCodigo, lerEmailCadastrado, mascarar } from '../recuperacao';
 import { s } from '../estilos';
 import { cor, LOGO, VERSAO } from '../tema';
@@ -44,6 +45,37 @@ export default function Login({ config, setConfig, onEntrar, onResetar }) {
     })();
   }, [primeiro]);
 
+  // depois de entrar com senha, oferece ativar a digital (se o celular tiver e ainda não estiver ativa)
+  const oferecerDigital = async () => {
+    try {
+      const recusou = (await SecureStore.getItemAsync('mc_bio_recusou')) === '1';
+      if (recusou || !(await digitalDisponivel()) || (await digitalAtiva())) return onEntrar();
+    } catch (err) { return onEntrar(); }
+
+    Alert.alert(
+      'Entrar com digital',
+      'Deseja usar sua digital para entrar mais rápido nas próximas vezes?',
+      [
+        { text: 'Agora não', onPress: onEntrar },
+        {
+          text: 'Não perguntar mais',
+          onPress: async () => {
+            try { await SecureStore.setItemAsync('mc_bio_recusou', '1'); } catch (err) {}
+            onEntrar();
+          },
+        },
+        {
+          text: 'Ativar',
+          onPress: async () => {
+            if (await pedirDigital('Confirme sua digital para ativar')) await definirDigital(true);
+            onEntrar();
+          },
+        },
+      ],
+      { cancelable: false }
+    );
+  };
+
   const entrar = async () => {
     if (primeiro) {
       if (usuario.trim().length < 3) return Alert.alert('Usuário curto', 'Use pelo menos 3 letras.');
@@ -54,9 +86,9 @@ export default function Login({ config, setConfig, onEntrar, onResetar }) {
       try { await gravarCred(salt, senhaHash); }
       catch (err) { return Alert.alert('Erro ao salvar', 'Não foi possível guardar a senha com segurança neste celular. Tente de novo.'); }
       setConfig({ ...config, usuario: usuario.trim(), salt, senhaHash });
-      onEntrar();
+      oferecerDigital();
     } else if (usuario.trim() === config.usuario && (await hashSenha(senha, config.salt)) === config.senhaHash) {
-      onEntrar();
+      oferecerDigital();
     } else {
       Alert.alert('Não foi possível entrar', 'Usuário ou senha incorretos.');
     }
