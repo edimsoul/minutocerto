@@ -1,5 +1,8 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, Alert } from 'react-native';
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  View, Text, TextInput, TouchableOpacity, ScrollView, Alert, Keyboard, Platform, StyleSheet,
+} from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Crypto from 'expo-crypto';
 import { hashSenha, gravarCred } from '../armazenamento';
 import CampoSenha from '../componentes/CampoSenha';
@@ -11,6 +14,27 @@ export default function Acesso({ config, setConfig }) {
   const [usuario, setUsuario] = useState(config.usuario);
   const [nova, setNova] = useState('');
   const [nova2, setNova2] = useState('');
+  const [tecladoAlt, setTecladoAlt] = useState(0);
+
+  const scroll = useRef(null);
+  const cardY = useRef({});
+  const campoY = useRef({});
+
+  // altura do teclado -> espaço extra no fim, para dar para rolar até o último campo
+  useEffect(() => {
+    const a = Keyboard.addListener('keyboardDidShow', (ev) => setTecladoAlt(ev.endCoordinates.height));
+    const b = Keyboard.addListener('keyboardDidHide', () => setTecladoAlt(0));
+    return () => { a.remove(); b.remove(); };
+  }, []);
+
+  // ao focar, rola para o campo ficar visível acima do teclado
+  const rolarPara = (card, campo) => {
+    setTimeout(() => {
+      const y = (cardY.current[card] || 0) + (campoY.current[campo] || 0);
+      scroll.current?.scrollTo({ y: Math.max(0, y - 90), animated: true });
+    }, 150);
+  };
+
   const salvar = async () => {
     if ((await hashSenha(atual, config.salt)) !== config.senhaHash) {
       return Alert.alert('Senha atual errada', 'Confira e tente de novo.');
@@ -27,27 +51,88 @@ export default function Acesso({ config, setConfig }) {
     }
     setConfig({ ...config, usuario: usuario.trim(), salt, senhaHash });
     setAtual(''); setNova(''); setNova2('');
+    Keyboard.dismiss();
     Alert.alert('Salvo', 'Usuário e senha atualizados.');
   };
+
+  // guarda a posição de cada card e campo
+  const noCard = (k) => (ev) => { cardY.current[k] = ev.nativeEvent.layout.y; };
+  const noCampo = (k) => (ev) => { campoY.current[k] = ev.nativeEvent.layout.y; };
+
   return (
-    <ScrollView contentContainerStyle={{ padding: 14 }} keyboardShouldPersistTaps="handled">
-      <View style={s.card}>
-        <Text style={s.rotulo}>Usuário</Text>
-        <TextInput style={s.input} autoCapitalize="none" autoCorrect={false} value={usuario} onChangeText={setUsuario} />
-        <Text style={[s.rotulo, { marginTop: 14 }]}>Senha atual</Text>
-        <CampoSenha value={atual} onChangeText={setAtual} />
+    <ScrollView
+      ref={scroll}
+      contentContainerStyle={{ padding: 14, paddingBottom: 30 + tecladoAlt }}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+    >
+      {/* Card 1: usuário */}
+      <View style={[s.card, e.card]} onLayout={noCard('usuario')}>
+        <View style={e.cabeca}>
+          <View style={[e.icone, { backgroundColor: cor.azul + '22' }]}>
+            <MaterialCommunityIcons name="account-outline" size={26} color={cor.azul} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={e.titulo}>Usuário</Text>
+            <Text style={e.desc}>Nome usado para entrar no app</Text>
+          </View>
+        </View>
+        <View onLayout={noCampo('usuario')}>
+          <TextInput
+            style={s.input}
+            placeholder="Usuário"
+            autoCapitalize="none"
+            autoCorrect={false}
+            value={usuario}
+            onChangeText={setUsuario}
+            onFocus={() => rolarPara('usuario', 'usuario')}
+          />
+        </View>
+      </View>
+
+      {/* Card 2: senha */}
+      <View style={[s.card, e.card]} onLayout={noCard('senha')}>
+        <View style={e.cabeca}>
+          <View style={[e.icone, { backgroundColor: cor.verde + '22' }]}>
+            <MaterialCommunityIcons name="lock-outline" size={26} color={cor.verde} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={e.titulo}>Senha</Text>
+            <Text style={e.desc}>Confirme a atual e, se quiser, defina outra</Text>
+          </View>
+        </View>
+
+        <Text style={s.rotulo}>Senha atual</Text>
+        <View onLayout={noCampo('atual')}>
+          <CampoSenha value={atual} onChangeText={setAtual} onFocus={() => rolarPara('senha', 'atual')} />
+        </View>
+
         <Text style={[s.rotulo, { marginTop: 14 }]}>Nova senha (deixe vazio para manter)</Text>
-        <CampoSenha value={nova} onChangeText={setNova} />
+        <View onLayout={noCampo('nova')}>
+          <CampoSenha value={nova} onChangeText={setNova} onFocus={() => rolarPara('senha', 'nova')} />
+        </View>
+
         {!!nova && (
           <>
             <Text style={[s.rotulo, { marginTop: 14 }]}>Repita a nova senha</Text>
-            <CampoSenha value={nova2} onChangeText={setNova2} />
+            <View onLayout={noCampo('nova2')}>
+              <CampoSenha value={nova2} onChangeText={setNova2} onFocus={() => rolarPara('senha', 'nova2')} />
+            </View>
           </>
         )}
-        <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.verde }]} onPress={salvar}>
-          <Text style={s.botaoGrandeTxt}>Salvar</Text>
-        </TouchableOpacity>
       </View>
+
+      <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.verde }]} onPress={salvar}>
+        <Text style={s.botaoGrandeTxt}>Salvar</Text>
+      </TouchableOpacity>
     </ScrollView>
   );
 }
+
+const e = StyleSheet.create({
+  card: { marginBottom: 14 },
+  cabeca: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
+  icone: { width: 48, height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  titulo: { fontSize: 17, fontWeight: '800', color: cor.tinta },
+  desc: { fontSize: 12, color: cor.suave, marginTop: 2 },
+});

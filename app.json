@@ -2,7 +2,7 @@
   "expo": {
     "name": "MinutoCerto",
     "slug": "minutocerto",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "icon": "./assets/icon.png",
@@ -10,9 +10,8 @@
       "policy": "appVersion"
     },
     "updates": {
-      "url": "https://u.expo.dev/840ccf05-0b58-40a1-b612-a83a38ca3f76",
-      "checkAutomatically": "ON_ERROR_RECOVERY",
-      "fallbackToCacheTimeout": 0
+    "url": "https://u.expo.dev/840ccf05-0b58-40a1-b612-a83a38ca3f76",
+    "checkAutomatically": "ON_LOAD"
     },
     "android": {
       "package": "com.minutocerto.app",

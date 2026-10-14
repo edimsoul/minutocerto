@@ -1,116 +1,63 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, AppState } from 'react-native';
-import { s } from '../estilos';
-import { cor } from '../tema';
-import { conectarMercadoPago, statusMercadoPago, testarServidor, configuracaoPendente } from '../nuvem';
+import { Linking } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// traduz o erro técnico para o que precisa ser corrigido
-function explicar(err) {
-  const m = String((err && err.message) || err);
-  if (err && err.name === 'AbortError') return 'O servidor demorou demais para responder. Tente de novo em um minuto.';
-  if (/network request failed|failed to fetch/i.test(m)) {
-    return 'Não foi possível falar com o servidor. Confira o endereço em src/nuvem.js e a internet do celular. Se o servidor estava dormindo, espere 1 minuto e tente de novo.';
-  }
-  if (err && err.status === 401) return 'O servidor recusou o app: a APP_KEY do app (src/nuvem.js) é diferente da APP_KEY do Render.';
-  if (/OAuth não configurado/i.test(m)) return 'No Render faltam as variáveis MP_CLIENT_ID e PUBLIC_URL (Environment).';
-  return m;
+export const SERVIDOR = 'https://SEU-APP.onrender.com';
+export const APP_KEY = 'SUA_APP_KEY';
+
+export function configuracaoPendente() {
+  return !SERVIDOR || SERVIDOR.includes('SEU-APP') || !APP_KEY || APP_KEY === 'SUA_APP_KEY';
 }
 
-export default function MercadoPago() {
-  const [estado, setEstado] = useState(null);
-  const [carregando, setCarregando] = useState(true);
-  const [conectando, setConectando] = useState(false);
-  const [testando, setTestando] = useState(false);
-  const [erro, setErro] = useState('');
-  const [aviso, setAviso] = useState('');
+export async function obterDeviceId() {
+  let id = await AsyncStorage.getItem('device_id');
+  if (!id) {
+    const aleatorio = () => Math.random().toString(36).slice(2, 10);
+    id = `d${Date.now().toString(36)}${aleatorio()}${aleatorio()}`;
+    await AsyncStorage.setItem('device_id', id);
+  }
+  return id;
+}
 
-  const atualizar = useCallback(async () => {
-    if (configuracaoPendente()) {
-      setCarregando(false);
-      setErro('Falta preencher SERVIDOR e APP_KEY no arquivo src/nuvem.js.');
-      return;
+async function chamar(caminho, opcoes = {}, tempoMs = 70000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), tempoMs);
+  try {
+    const r = await fetch(SERVIDOR.replace(/\/$/, '') + caminho, {
+      ...opcoes,
+      headers: { 'Content-Type': 'application/json', 'x-app-key': APP_KEY, ...(opcoes.headers || {}) },
+      signal: ctrl.signal,
+    });
+    let corpo = null;
+    try { corpo = await r.json(); } catch (e) {}
+    if (!r.ok) {
+      const e = new Error((corpo && (corpo.erro || corpo.error || corpo.message)) || `Erro ${r.status}`);
+      e.status = r.status;
+      throw e;
     }
-    setCarregando(true);
-    setErro('');
-    try {
-      setEstado(await statusMercadoPago());
-    } catch (err) {
-      setErro(explicar(err));
-    } finally {
-      setCarregando(false);
-    }
-  }, []);
+    return corpo;
+  } finally {
+    clearTimeout(t);
+  }
+}
 
-  // ao voltar do navegador (depois de autorizar), confere de novo
-  useEffect(() => {
-    atualizar();
-    const sub = AppState.addEventListener('change', (x) => { if (x === 'active') atualizar(); });
-    return () => sub.remove();
-  }, [atualizar]);
+export async function testarServidor() {
+  try {
+    await chamar('/health');
+    return true;
+  } catch (e) {
+    if (e.status) return false;
+    throw e;
+  }
+}
 
-  const conectar = async () => {
-    if (configuracaoPendente()) return setErro('Falta preencher SERVIDOR e APP_KEY no arquivo src/nuvem.js.');
-    setConectando(true);
-    setErro('');
-    setAviso('Contatando o servidor... na primeira vez pode levar até 1 minuto.');
-    try {
-      await conectarMercadoPago();
-      setAviso('Faça o login no Mercado Pago, autorize e volte para o app.');
-    } catch (err) {
-      setAviso('');
-      setErro(explicar(err));
-    } finally {
-      setConectando(false);
-    }
-  };
+export async function statusMercadoPago() {
+  const id = await obterDeviceId();
+  return chamar(`/api/mp/conta?device_id=${encodeURIComponent(id)}`);
+}
 
-  const testar = async () => {
-    setTestando(true);
-    setErro('');
-    setAviso('Testando o servidor...');
-    try {
-      const ok = await testarServidor();
-      setAviso(ok ? 'Servidor respondendo normalmente.' : 'O servidor respondeu com erro. Veja os Logs no Render.');
-    } catch (err) {
-      setAviso('');
-      setErro(explicar(err));
-    } finally {
-      setTestando(false);
-    }
-  };
-
-  const conectado = estado && estado.conectado;
-
-  return (
-    <ScrollView contentContainerStyle={{ padding: 14 }}>
-      <View style={s.card}>
-        <Text style={s.rotulo}>Conta Mercado Pago</Text>
-        {carregando ? (
-          <ActivityIndicator />
-        ) : conectado ? (
-          <Text style={{ color: cor.verde, fontWeight: '800', fontSize: 16 }}>Conectada (ID {estado.mp_user_id})</Text>
-        ) : (
-          <Text style={{ color: cor.suave, fontSize: 16 }}>Nenhuma conta conectada.</Text>
-        )}
-
-        {!!erro && <Text style={{ color: cor.vermelho, marginTop: 10, lineHeight: 20 }}>{erro}</Text>}
-        {!!aviso && <Text style={{ color: cor.azul, marginTop: 10, lineHeight: 20 }}>{aviso}</Text>}
-
-        <TouchableOpacity style={[s.botaoGrande, conectando && { opacity: 0.6 }]} onPress={conectar} disabled={conectando}>
-          {conectando
-            ? <ActivityIndicator color={cor.branco} />
-            : <Text style={s.botaoGrandeTxt}>{conectado ? 'Conectar outra conta' : 'Conectar Mercado Pago'}</Text>}
-        </TouchableOpacity>
-        <TouchableOpacity onPress={atualizar}><Text style={s.link}>Verificar novamente</Text></TouchableOpacity>
-        <TouchableOpacity onPress={testar} disabled={testando}>
-          <Text style={[s.link, { color: cor.suave }]}>{testando ? 'Testando...' : 'Testar conexão com o servidor'}</Text>
-        </TouchableOpacity>
-
-        <Text style={s.ajuda}>
-          O botão abre o site do Mercado Pago no navegador. Lá você entra com seu login, autoriza o MinutoCerto e volta para o app.
-          A senha do Mercado Pago não passa por aqui.
-        </Text>
-      </View>
-    </ScrollView>
-  );
+export async function conectarMercadoPago() {
+  const id = await obterDeviceId();
+  const dados = await chamar(`/api/mp/oauth/url?device_id=${encodeURIComponent(id)}`);
+  if (!dados || !dados.url) throw new Error('O servidor não devolveu o link de autorização.');
+  await Linking.openURL(dados.url);
 }

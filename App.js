@@ -15,7 +15,7 @@ import { useConfig, CONFIG_PADRAO } from './src/sessao';
 import { useHistorico } from './src/historico';
 import { useVoltarAndroid } from './src/hooks';
 import { useAtualizacao, AvisoBaixando } from './src/atualizacao';
-import { useSincronizacao, registrarAcesso } from './src/nuvem';
+import { useSincronizacao, registrarAcesso } from './src/sincronizacao';
 
 import { useBrinquedos } from './src/brinquedos/useBrinquedos';
 import Brinquedos from './src/brinquedos/Brinquedos';
@@ -56,12 +56,12 @@ export default function App() {
   });
 
   // a senha não vai para a nuvem (ajuste o nome do campo se for outro)
-  const { senha, ...configSemSenha } = config;
+
   useSincronizacao(
-    { config: configSemSenha, historico: historico.lista, brinquedos: brinq.itens, pula },
-    logado && configPronta,
-    VERSAO,
-  );
+  { config, historico: historico.lista, brinquedos: brinq.itens, pula },
+  logado && configPronta,
+  VERSAO,
+);
 
   useEffect(() => { registrarAcesso('abriu_app', null, VERSAO); }, []);
 
