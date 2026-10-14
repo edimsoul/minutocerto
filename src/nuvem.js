@@ -1,63 +1,85 @@
-import { Linking } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+// Comunicação com o servidor. Cada celular tem seu próprio deviceId e seu próprio token do
+// Mercado Pago (guardado só no cofre do celular). Nada de um usuário aparece para outro.
+import * as SecureStore from 'expo-secure-store';
+import * as Crypto from 'expo-crypto';
 
-export const SERVIDOR = 'https://SEU-APP.onrender.com';
-export const APP_KEY = 'SUA_APP_KEY';
+// >>> PREENCHA estes dois valores <<<
+export const SERVIDOR = 'https://SEU-APP.onrender.com'; // sem barra no final
+export const APP_KEY = 'SUA_APP_KEY'; // igual à APP_KEY do servidor
 
 export function configuracaoPendente() {
   return !SERVIDOR || SERVIDOR.includes('SEU-APP') || !APP_KEY || APP_KEY === 'SUA_APP_KEY';
 }
 
+// identificador único deste celular (criado uma vez e guardado no cofre)
 export async function obterDeviceId() {
-  let id = await AsyncStorage.getItem('device_id');
-  if (!id) {
-    const aleatorio = () => Math.random().toString(36).slice(2, 10);
-    id = `d${Date.now().toString(36)}${aleatorio()}${aleatorio()}`;
-    await AsyncStorage.setItem('device_id', id);
-  }
-  return id;
-}
-
-async function chamar(caminho, opcoes = {}, tempoMs = 70000) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), tempoMs);
   try {
-    const r = await fetch(SERVIDOR.replace(/\/$/, '') + caminho, {
-      ...opcoes,
-      headers: { 'Content-Type': 'application/json', 'x-app-key': APP_KEY, ...(opcoes.headers || {}) },
-      signal: ctrl.signal,
-    });
-    let corpo = null;
-    try { corpo = await r.json(); } catch (e) {}
-    if (!r.ok) {
-      const e = new Error((corpo && (corpo.erro || corpo.error || corpo.message)) || `Erro ${r.status}`);
-      e.status = r.status;
-      throw e;
+    let id = await SecureStore.getItemAsync('mc_device');
+    if (!id) {
+      id = Crypto.randomUUID();
+      await SecureStore.setItemAsync('mc_device', id);
     }
-    return corpo;
-  } finally {
-    clearTimeout(t);
-  }
-}
-
-export async function testarServidor() {
-  try {
-    await chamar('/health');
-    return true;
+    return id;
   } catch (e) {
-    if (e.status) return false;
-    throw e;
+    return 'sem-id';
   }
 }
 
-export async function statusMercadoPago() {
-  const id = await obterDeviceId();
-  return chamar(`/api/mp/conta?device_id=${encodeURIComponent(id)}`);
+async function chamar(metodo, rota, corpo, comToken) {
+  const headers = { 'Content-Type': 'application/json', 'x-app-key': APP_KEY };
+  headers['x-device-id'] = await obterDeviceId();
+  if (comToken) {
+    const t = await SecureStore.getItemAsync('mc_token').catch(() => '');
+    if (!t) throw new Error('Token do Mercado Pago não cadastrado.');
+    headers['x-mp-token'] = t;
+  }
+  const r = await fetch(`${SERVIDOR}${rota}`, {
+    method: metodo,
+    headers,
+    body: corpo ? JSON.stringify(corpo) : undefined,
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.erro || `Erro ${r.status}`);
+  return j;
 }
 
-export async function conectarMercadoPago() {
-  const id = await obterDeviceId();
-  const dados = await chamar(`/api/mp/oauth/url?device_id=${encodeURIComponent(id)}`);
-  if (!dados || !dados.url) throw new Error('O servidor não devolveu o link de autorização.');
-  await Linking.openURL(dados.url);
+// o servidor está no ar e a chave confere?
+export async function testarServidor() {
+  if (configuracaoPendente()) return { ok: false, erro: 'Falta preencher SERVIDOR e APP_KEY em src/nuvem.js' };
+  try { await chamar('GET', '/saude'); return { ok: true }; }
+  catch (e) { return { ok: false, erro: e.message }; }
 }
+
+// há token salvo neste celular e ele é válido no Mercado Pago?
+export async function statusMercadoPago() {
+  if (configuracaoPendente()) return { conectado: false, erro: 'Servidor não configurado.' };
+  try {
+    const t = await SecureStore.getItemAsync('mc_token');
+    if (!t) return { conectado: false };
+    const j = await chamar('GET', '/mp/status', null, true);
+    return { conectado: !!j.conectado };
+  } catch (e) { return { conectado: false, erro: e.message }; }
+}
+
+// salva o token (só neste celular) depois de o servidor confirmar que ele funciona
+export async function conectarMercadoPago(token) {
+  if (configuracaoPendente()) return { ok: false, erro: 'Servidor não configurado.' };
+  const t = (token || '').trim();
+  if (!t) return { ok: false, erro: 'Cole o token do Mercado Pago.' };
+  try {
+    await SecureStore.setItemAsync('mc_token', t);
+    const j = await chamar('GET', '/mp/status', null, true);
+    if (!j.conectado) {
+      await SecureStore.deleteItemAsync('mc_token');
+      return { ok: false, erro: 'Token inválido.' };
+    }
+    return { ok: true };
+  } catch (e) {
+    await SecureStore.deleteItemAsync('mc_token').catch(() => {});
+    return { ok: false, erro: e.message };
+  }
+}
+
+// cria uma cobrança Pix com o token DESTE celular
+export const criarPix = (valor, descricao) => chamar('POST', '/mp/pix', { valor, descricao }, true);
+export const statusPix = (id) => chamar('GET', `/mp/pix/${id}`, null, true);
