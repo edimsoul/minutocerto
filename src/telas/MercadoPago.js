@@ -112,10 +112,22 @@ export default function MercadoPago() {
         {!!erro && <Text style={{ color: cor.vermelho, marginTop: 10, lineHeight: 20 }}>{erro}</Text>}
         {!!aviso && <Text style={{ color: cor.azul, marginTop: 10, lineHeight: 20 }}>{aviso}</Text>}
 
-        <TouchableOpacity style={[s.botaoGrande, conectando && { opacity: 0.6 }]} onPress={conectar} disabled={conectando}>
+        {/* cores definidas aqui mesmo para o botão nunca ficar invisível */}
+        <TouchableOpacity
+          style={[
+            { backgroundColor: '#009EE3', paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginTop: 16 },
+            conectando && { opacity: 0.6 },
+          ]}
+          onPress={conectar}
+          disabled={conectando}
+        >
           {conectando
-            ? <ActivityIndicator color={cor.branco} />
-            : <Text style={s.botaoGrandeTxt}>{conectado ? 'Conectar outra conta' : 'Conectar Mercado Pago'}</Text>}
+            ? <ActivityIndicator color="#FFFFFF" />
+            : (
+              <Text style={{ color: '#FFFFFF', fontWeight: '800', fontSize: 16 }}>
+                {conectado ? 'Conectar outra conta' : 'Conectar Mercado Pago'}
+              </Text>
+            )}
         </TouchableOpacity>
         <TouchableOpacity onPress={atualizar}><Text style={s.link}>Verificar novamente</Text></TouchableOpacity>
         <TouchableOpacity onPress={testar} disabled={testando}>
@@ -123,7 +135,7 @@ export default function MercadoPago() {
         </TouchableOpacity>
 
         <Text style={s.ajuda}>
-          O botão abre o site do Mercado Pago no navegador. Lá você entra com seu login, autoriza o MinutoCerto e volta para o app.
+          Entrar com seu login do mercado pago, autoriza o MinutoCerto e volta para o app.
           A senha do Mercado Pago não passa por aqui.
         </Text>
       </View>

@@ -104,7 +104,7 @@ export default function App() {
           </View>
         ) : (
           <TouchableOpacity style={{ flex: 1 }} onPress={() => setTela('inicio')}>
-            <Text style={s.voltar}>‹ Voltar</Text>
+            
             <Text style={s.titulo}>{TITULOS[tela]}</Text>
           </TouchableOpacity>
         )}
@@ -128,7 +128,7 @@ export default function App() {
       </View>
 
       {tela === 'inicio' && (
-        <View style={{ paddingVertical: 8, alignItems: 'center', borderTopWidth: 1, borderColor: cor.linha, backgroundColor: cor.branco }}>
+        <View style={{ paddingVertical: 8, alignItems: 'center', borderTopWidth: 1, borderColor: cor.linha, backgroundColor: cor.branco, marginBottom: 12, }}>
           <Text style={{ fontSize: 12, color: cor.suave }}>MinutoCerto · versão {VERSAO}</Text>
         </View>
       )}

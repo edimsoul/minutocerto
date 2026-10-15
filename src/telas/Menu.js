@@ -94,5 +94,5 @@ const e = StyleSheet.create({
   cartaoIcone: { width: 52, height: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginBottom: 10 },
   cartaoTitulo: { fontSize: 16, fontWeight: '800', color: cor.tinta },
   cartaoDesc: { fontSize: 12, color: cor.suave, marginTop: 2 },
-  versao: { textAlign: 'center', fontSize: 12, color: cor.suave, paddingVertical: 10 },
+  versao: { textAlign: 'center', fontSize: 12, color: cor.suave, paddingVertical: 10, marginBottom: 5, },
 });

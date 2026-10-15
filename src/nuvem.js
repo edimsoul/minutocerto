@@ -7,7 +7,7 @@ import * as Crypto from 'expo-crypto';
 
 // >>> PREENCHA estes dois valores <<<
 export const SERVIDOR = 'https://minutoseguro-server.onrender.com'; // sem barra no final
-export const APP_KEY = '5bf68eb822b95198d339c5d3b5965fb533239ce921a975d0'; // igual à APP_KEY do Render (Environment)
+export const APP_KEY = 'minuto2026chaveapp'; // igual à APP_KEY do Render (Environment)
 
 const ROTA_CONECTAR = '/mp/conectar'; // responde { url: 'https://auth.mercadopago...' }
 const ROTA_STATUS = '/mp/status';     // responde { conectado: true/false, mp_user_id }
@@ -18,8 +18,7 @@ export function configuracaoPendente() {
     !SERVIDOR ||
     SERVIDOR.includes('SEU-APP') ||
     !APP_KEY ||
-    APP_KEY === 'SUA_APP_KEY' ||
-    APP_KEY === 'COLE_AQUI_A_NOVA_APP_KEY'
+    APP_KEY.includes('COLE')
   );
 }
 

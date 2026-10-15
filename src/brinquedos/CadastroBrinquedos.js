@@ -10,8 +10,8 @@ import { htmlEtiquetas } from './etiquetas';
 import { s } from '../estilos';
 import { cor, TIPOS, ICONES, CORES } from '../tema';
 import { rotuloBrinquedo, hexDaCor, ordenar } from './brinquedo';
- import * as FileSystem from 'expo-file-system/legacy';
-
+import * as FileSystem from 'expo-file-system/legacy';
+import AreaTeclado from '../componentes/AreaTeclado';
 export default function CadastroBrinquedos({ brinq }) {
   const [categoria, setCategoria] = useState(TIPOS[0]);
   const [outroTipo, setOutroTipo] = useState('');
@@ -50,14 +50,14 @@ export default function CadastroBrinquedos({ brinq }) {
 
   // no SDK 53 ou anterior, use 'expo-file-system'
 
-const compartilhar = async (lista) => {
-  try {
-    await Print.printAsync({ html: htmlEtiquetas(lista) });
-  } catch (err) {
-    console.log('ERRO PDF:', err);
-    Alert.alert('Erro ao gerar o PDF', String(err.message || err));
-  }
-};
+  const compartilhar = async (lista) => {
+    try {
+      await Print.printAsync({ html: htmlEtiquetas(lista) });
+    } catch (err) {
+      console.log('ERRO PDF:', err);
+      Alert.alert('Erro ao gerar o PDF', String(err.message || err));
+    }
+  };
 
   const remover = (v) => {
     if (v.status !== 'livre') return Alert.alert('Brinquedo em uso', 'Encerre e cobre antes de remover.');
@@ -129,9 +129,11 @@ const compartilhar = async (lista) => {
             Sem etiqueta? Deixe sem ler: ao cadastrar, o app gera um QR Code para você imprimir e colar no brinquedo.
           </Text>
 
-          <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.verde }]} onPress={cadastrar}>
-            <Text style={s.botaoGrandeTxt}>Cadastrar brinquedo</Text>
-          </TouchableOpacity>
+          <AreaTeclado contentStyle={{ padding: 14 }}>
+            <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.verde }]} onPress={cadastrar}>
+              <Text style={s.botaoGrandeTxt}>Cadastrar brinquedo</Text>
+            </TouchableOpacity>
+          </AreaTeclado>
         </View>
 
         {itens.length > 0 && (

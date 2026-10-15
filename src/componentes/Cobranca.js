@@ -2,29 +2,30 @@ import React, { useEffect, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, Modal, Image, Alert, ActivityIndicator, StyleSheet,
 } from 'react-native';
-import { criarPix, statusPix, cancelarPix } from '../../mercadoPago';
+import { criarPix, statusPix } from '../nuvem';
 import { s } from '../estilos';
 import { cor, LOGO } from '../tema';
 import { brl, calcValor, fmtTempoTexto } from '../util';
 
 // Cobrança compartilhada (dinheiro com troco, Pix, juntar itens, encerrar sem cobrança).
 // Não conhece brinquedos nem pula-pula: recebe os itens, o preço e como chamar cada item.
-export default function Cobranca({ principal, itens, preco, token, rotuloDe, onFinalizarOutro, onFechar, onPago }) {
+// O Pix é criado pelo SERVIDOR, usando a conta Mercado Pago conectada no menu (não precisa de token no app).
+export default function Cobranca({ principal, itens, preco, rotuloDe, onFinalizarOutro, onFechar, onPago }) {
   const [extras, setExtras] = useState([]);
-  const [modo, setModo] = useState('escolha'); // escolha | dinheiro | pix
+  const [modo, setModo] = useState('escolha'); // escolha | dinheiro | pix | semcobranca
   const [recebido, setRecebido] = useState('');
   const [pix, setPix] = useState(null);
   const [carregando, setCarregando] = useState(false);
   const [motivo, setMotivo] = useState('Cortesia');
   const [outro, setOutro] = useState('');
 
+  // o servidor ainda não tem rota para cancelar Pix: aqui só se abandona o QR Code.
+  // O Pix não pago vence sozinho no Mercado Pago.
   const cancelarPixAtual = () => {
-    if (pix) cancelarPix(token, pix.id);
     setPix(null);
     setModo('escolha');
   };
   const fechar = () => {
-    if (pix) cancelarPix(token, pix.id);
     onFechar();
   };
   // botão voltar do Android: volta um passo; na primeira tela, fecha a cobrança
@@ -45,26 +46,34 @@ export default function Cobranca({ principal, itens, preco, token, rotuloDe, onF
   const troco = Math.round((rec - valor) * 100) / 100;
 
   const gerarPix = async () => {
-    if (!token) {
-      return Alert.alert('Falta o token', 'Cole o Access Token no menu, em Mercado Pago.');
-    }
     if (valor < 0.01) return Alert.alert('Valor zerado', 'Não há o que cobrar.');
     setCarregando(true);
     try {
       const nome = lista.map((v) => rotuloDe(v)).join(', ');
-      setPix(await criarPix(token, valor, `Aluguel ${nome}`));
+      const r = await criarPix(valor, `Aluguel ${nome}`);
+      if (!r.copiaECola || !r.qrBase64) throw new Error('O servidor não devolveu o QR Code do Pix.');
+      setPix({ id: r.id, copiaECola: r.copiaECola, imagem: r.qrBase64 });
       setModo('pix');
     } catch (e) {
-      Alert.alert('Erro no Pix', e.message);
+      const msg = e.status === 401
+        ? 'O servidor recusou o app: a APP_KEY do app é diferente da do Render.'
+        : e.name === 'AbortError'
+          ? 'O servidor demorou para responder. Tente de novo em um minuto.'
+          : /conecte sua conta/i.test(e.message)
+            ? 'Conecte sua conta do Mercado Pago no menu, em Mercado Pago, antes de gerar o Pix.'
+            : e.message;
+      Alert.alert('Erro no Pix', msg);
     }
     setCarregando(false);
   };
 
+  // confere o pagamento a cada 4 segundos
   useEffect(() => {
     if (!pix) return;
     const i = setInterval(async () => {
       try {
-        if ((await statusPix(token, pix.id)) === 'approved') {
+        const r = await statusPix(pix.id);
+        if (r.status === 'approved') {
           clearInterval(i);
           onPago('Pix', lista, {});
         }

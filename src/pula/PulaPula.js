@@ -1,6 +1,7 @@
-// Pula-pula: anota o nome, a contagem começa na hora; pausar, encerrar e cobrar.
-import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, Alert } from 'react-native';
+// Pula-pula: anota o nome, escolhe o tempo (livre, 5, 10, 15 ou outro); pausar, encerrar e cobrar.
+// Avisa com vibração + banner quando o tempo do pacote acaba.
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, Alert, Modal, Vibration, KeyboardAvoidingView, Platform } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import Cobranca from '../componentes/Cobranca';
 import Botao from '../componentes/Botao';
@@ -10,17 +11,121 @@ import { brl, calcValor, decorrido, fmtTempo } from '../util';
 import { useAgora } from '../hooks';
 import { montarHistorico } from '../historico';
 
-const STATUS = { rodando: 'Pulando', pausado: 'Pausado', finalizado: 'Aguardando pagamento' };
+
+const STATUS = { rodando: 'Brincando', pausado: 'Pausado', finalizado: 'Aguardando pagamento' };
 const COR_STATUS = { rodando: cor.verde, pausado: cor.ambar, finalizado: cor.vermelho };
 const rotuloPessoa = (v) => v.numero;
+
+const PREDEFINIDOS = [5, 10, 15];
+const PADRAO_VIBRACAO = [0, 600, 300, 600, 300, 600];
+
+// Fundos suaves e harmoniosos, um para cada card (repetem em sequência)
+const FUNDOS = [
+  '#EAF3FC', // azul muito claro
+  '#E4F4EC', // verde menta
+  '#EFEAFB', // lilás
+  '#FDF1E4', // pêssego
+  '#E3F3F5', // azul água
+  '#FBEAF0', // rosa
+  '#F5F3DF', // areia
+];
+const FUNDO_ESGOTADO = '#FDECEC';
+
+// Estilo dos campos de texto: texto preto, sempre legível
+const TEXTO_INPUT = { color: '#000' };
+const COR_PLACEHOLDER = '#6b7280';
+
+// Seletor de tempo: Livre | 5 | 10 | 15 | Outro (minutos digitados)
+function SeletorTempo({ valor, onChange }) {
+  const ehOutro = valor != null && !PREDEFINIDOS.includes(valor);
+  const [outro, setOutro] = useState(ehOutro);
+  const [txt, setTxt] = useState(ehOutro ? String(valor) : '');
+
+  const chip = (rotulo, ativo, onPress) => (
+    <TouchableOpacity
+      key={rotulo}
+      onPress={onPress}
+      style={{
+        paddingVertical: 10,
+        paddingHorizontal: 14,
+        borderRadius: 20,
+        borderWidth: 1.5,
+        borderColor: ativo ? cor.azul : '#d1d5db',
+        backgroundColor: ativo ? cor.azul : '#fff',
+      }}>
+      <Text style={{ fontWeight: '700', color: ativo ? '#fff' : '#374151' }}>{rotulo}</Text>
+    </TouchableOpacity>
+  );
+
+  return (
+    <View>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        {chip('Livre', !outro && valor == null, () => { setOutro(false); onChange(null); })}
+        {PREDEFINIDOS.map((m) =>
+          chip(`${m} min`, !outro && valor === m, () => { setOutro(false); onChange(m); })
+        )}
+        {chip('Outro', outro, () => {
+          setOutro(true);
+          const n = parseInt(txt, 10);
+          onChange(n > 0 ? n : null);
+        })}
+      </View>
+      {outro && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10, gap: 8 }}>
+          <TextInput
+            style={[s.input, TEXTO_INPUT, { width: 100 }]}
+            placeholder="Minutos"
+            placeholderTextColor={COR_PLACEHOLDER}
+            keyboardType="number-pad"
+            value={txt}
+            onChangeText={(t) => {
+              const limpo = t.replace(/[^0-9]/g, '');
+              setTxt(limpo);
+              const n = parseInt(limpo, 10);
+              onChange(n > 0 ? n : null);
+            }}
+          />
+          <Text style={{ color: cor.suave, fontWeight: '600' }}>minutos</Text>
+        </View>
+      )}
+    </View>
+  );
+}
 
 export default function PulaPula({ pula, config, onPagamento }) {
   const agora = useAgora();
   const [nome, setNome] = useState('');
+  const [pacote, setPacote] = useState(null); // null = livre (por minutos)
   const [cobrancaId, setCobrancaId] = useState(null);
+  const [editandoId, setEditandoId] = useState(null);
+  const [avisos, setAvisos] = useState([]); // nomes de quem teve o tempo esgotado
+  const avisados = useRef(new Set()); // chaves "id-pacote" que já avisaram
 
   const preco = config.precoPula;
   const cobrando = pula.itens.find((v) => v.id === cobrancaId);
+  const editando = pula.itens.find((v) => v.id === editandoId);
+
+  // Confere a cada tick se alguém estourou o tempo do pacote
+  useEffect(() => {
+    const novos = [];
+    pula.itens.forEach((v) => {
+      if (v.status !== 'rodando' || !v.pacote) return;
+      const chave = `${v.id}-${v.pacote}`;
+      if (decorrido(v, agora) >= v.pacote * 60000 && !avisados.current.has(chave)) {
+        avisados.current.add(chave);
+        novos.push(v.numero);
+      }
+    });
+    if (novos.length) {
+      Vibration.vibrate(PADRAO_VIBRACAO);
+      setAvisos((a) => [...a, ...novos]);
+    }
+  }, [agora]);
+
+  const fecharAviso = () => {
+    Vibration.cancel();
+    setAvisos([]);
+  };
 
   const excluir = (v) =>
     Alert.alert('Excluir', `Excluir ${v.numero} sem cobrar?`, [
@@ -30,27 +135,67 @@ export default function PulaPula({ pula, config, onPagamento }) {
 
   return (
     <>
+      {avisos.length > 0 && (
+        <View
+          style={{
+            backgroundColor: cor.vermelho,
+            paddingVertical: 12,
+            paddingHorizontal: 14,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 10,
+          }}>
+          <MaterialCommunityIcons name="alarm-light" size={26} color="#fff" />
+          <Text style={{ flex: 1, color: '#fff', fontWeight: '800', fontSize: 15 }}>
+            Tempo esgotado: {avisos.join(', ')}
+          </Text>
+          <TouchableOpacity
+            onPress={fecharAviso}
+            style={{ backgroundColor: '#fff', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 16 }}>
+            <Text style={{ color: cor.vermelho, fontWeight: '800' }}>OK</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 30 }} keyboardShouldPersistTaps="handled">
         <View style={s.card}>
           <Text style={s.rotulo}>Nova pessoa no pula-pula</Text>
           <View style={{ flexDirection: 'row', gap: 8 }}>
-            <TextInput style={[s.input, { flex: 1 }]} placeholder="Nome (ex: Ana)" value={nome} onChangeText={setNome} />
+            <TextInput
+              style={[s.input, TEXTO_INPUT, { flex: 1 }]}
+              placeholder="Nome (ex: Ana)"
+              placeholderTextColor={COR_PLACEHOLDER}
+              value={nome}
+              onChangeText={setNome}
+            />
             <TouchableOpacity
               style={[s.btnAzul, { backgroundColor: cor.verde }]}
-              onPress={() => { pula.adicionar(nome); setNome(''); }}>
+              onPress={() => { pula.adicionar(nome, pacote); setNome(''); }}>
               <Text style={s.btnTxt}>Iniciar</Text>
             </TouchableOpacity>
           </View>
+
+          <Text style={[s.rotulo, { marginTop: 14 }]}>Tempo</Text>
+          <SeletorTempo valor={pacote} onChange={setPacote} />
         </View>
 
         {pula.itens.length === 0 && (
-          <Text style={s.vazio}>Ninguém no pula-pula agora.{'\n'}Digite um nome e toque em Iniciar.</Text>
+          <Text style={s.vazio}>Ninguém no pula-pula agora.{'\n'}Digite um nome, escolha o tempo e toque em Iniciar.</Text>
         )}
 
-        {pula.itens.map((v) => {
+        {pula.itens.map((v, i) => {
           const ms = decorrido(v, agora);
+          const pacoteMs = v.pacote ? v.pacote * 60000 : 0;
+          const temPacote = pacoteMs > 0;
+          const esgotado = temPacote && ms >= pacoteMs;
+          const restante = Math.max(0, pacoteMs - ms);
+          const valorAoVivo = calcValor(temPacote ? Math.max(ms, pacoteMs) : ms, preco);
+          const alerta = esgotado && v.status !== 'finalizado';
+          const corBorda = alerta ? cor.vermelho : COR_STATUS[v.status];
+          const fundo = alerta ? FUNDO_ESGOTADO : FUNDOS[i % FUNDOS.length];
+
           return (
-            <View key={v.id} style={[s.veiculo, { borderLeftColor: COR_STATUS[v.status] }]}>
+            <View key={v.id} style={[s.veiculo, { borderLeftColor: corBorda, backgroundColor: fundo }]}>
               <View style={s.veiculoTopo}>
                 <View style={s.numero}>
                   <MaterialCommunityIcons name={ICONES['Pula-pula']} size={32} color={cor.branco} />
@@ -58,12 +203,27 @@ export default function PulaPula({ pula, config, onPagamento }) {
                 <View style={{ flex: 1, marginLeft: 12 }}>
                   <Text style={s.tipo}>{rotuloPessoa(v)}</Text>
                   <Text style={[s.status, { color: COR_STATUS[v.status] }]}>{STATUS[v.status]}</Text>
+                  <Text style={{ color: cor.suave, fontWeight: '600', marginTop: 2 }}>
+                    {temPacote ? `Pacote de ${v.pacote} min` : 'Livre (por minutos)'}
+                  </Text>
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
                   <Text style={s.relogio}>{fmtTempo(ms)}</Text>
-                  <Text style={s.valorAoVivo}>{brl(calcValor(ms, preco))}</Text>
+                  <Text style={s.valorAoVivo}>{brl(valorAoVivo)}</Text>
                 </View>
               </View>
+
+              {temPacote && v.status !== 'finalizado' && (
+                <Text
+                  style={{
+                    textAlign: 'center',
+                    fontWeight: '800',
+                    marginTop: 10,
+                    color: esgotado ? cor.vermelho : cor.suave,
+                  }}>
+                  {esgotado ? 'TEMPO ESGOTADO' : `Faltam ${fmtTempo(restante)}`}
+                </Text>
+              )}
 
               <View style={s.acoes}>
                 {v.status === 'rodando' && (<>
@@ -74,6 +234,9 @@ export default function PulaPula({ pula, config, onPagamento }) {
                   <Botao txt="Continuar" c={cor.verde} onPress={() => pula.retomar(v)} />
                   <Botao txt="Fim" c={cor.vermelho} onPress={() => { pula.finalizar(v); setCobrancaId(v.id); }} />
                 </>)}
+                {v.status !== 'finalizado' && (
+                  <Botao txt="Tempo" c={cor.azul} onPress={() => setEditandoId(v.id)} />
+                )}
                 {v.status === 'finalizado' && <Botao txt="Cobrar" c={cor.azul} onPress={() => setCobrancaId(v.id)} />}
               </View>
               {v.status !== 'finalizado' && (
@@ -85,6 +248,48 @@ export default function PulaPula({ pula, config, onPagamento }) {
           );
         })}
       </ScrollView>
+
+      {/* Editar o tempo de quem já está pulando */}
+      {/* Editar o tempo de quem já está pulando */}
+<Modal visible={!!editando} transparent animationType="fade" onRequestClose={() => setEditandoId(null)}>
+  <KeyboardAvoidingView
+    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}>
+    <ScrollView
+      contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 20 }}
+      keyboardShouldPersistTaps="handled">
+      {editando && (
+        <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 18 }}>
+          <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 4, color: '#000' }}>
+            Tempo de {editando.numero}
+          </Text>
+          <Text style={{ color: cor.suave, marginBottom: 14 }}>
+            O relógio não zera: o novo tempo vale a partir do que já passou.
+          </Text>
+          <SeletorTempo
+            key={editando.id}
+            valor={editando.pacote || null}
+            onChange={(m) => pula.alterarPacote(editando, m)}
+          />
+          <TouchableOpacity
+            onPress={() => setEditandoId(null)}
+            activeOpacity={0.8}
+            style={{
+              marginTop: 20,
+              backgroundColor: cor.verde,
+              borderRadius: 12,
+              paddingVertical: 16,
+              alignItems: 'center',
+              alignSelf: 'stretch',
+              minHeight: 54,
+            }}>
+            <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800' }}>Pronto</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </ScrollView>
+  </KeyboardAvoidingView>
+</Modal>
 
       {cobrando && (
         <Cobranca

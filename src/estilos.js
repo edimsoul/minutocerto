@@ -19,7 +19,7 @@ export const s = StyleSheet.create({
   chip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 20, backgroundColor: cor.fundo, borderWidth: 1, borderColor: cor.linha },
   chipOn: { backgroundColor: cor.tinta, borderColor: cor.tinta },
   chipTxt: { fontWeight: '600', color: cor.tinta },
-  input: { borderWidth: 1, borderColor: cor.linha, borderRadius: 10, padding: 12, fontSize: 17, backgroundColor: cor.fundo, color: cor.tinta },
+  input: { borderWidth: 1, borderColor: cor.linha, borderRadius: 10, padding: 12, fontSize: 17, backgroundColor: cor.fundo, color: cor.tinta, color: '#000' },
   btnAzul: { backgroundColor: cor.azul, borderRadius: 10, paddingHorizontal: 16, justifyContent: 'center' },
   btnTxt: { color: cor.branco, fontWeight: '700' },
   vazio: { textAlign: 'center', color: cor.suave, marginVertical: 24, fontSize: 15 },

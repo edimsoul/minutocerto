@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert, StyleSheet } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert, StyleSheet, Animated, Keyboard } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { s } from '../estilos';
 import { cor } from '../tema';
@@ -17,6 +17,44 @@ export default function CartoesSeguranca() {
   const [passo, setPasso] = useState('form'); // 'form' | 'codigo'
   const [carreg, setCarreg] = useState(false);
   const [msg, setMsg] = useState('');
+
+  // --- Subir o cartão de e-mail acima do teclado ---
+  const medidorRef = useRef(null);            // View de fora (não se move): serve só para medir
+  const deslocY = useRef(new Animated.Value(0)).current; // quanto o cartão sobe
+  const topoTeclado = useRef(null);           // posição (screenY) do topo do teclado, null = fechado
+
+  const ajustarAoTeclado = () => {
+    const topo = topoTeclado.current;
+    if (topo == null || !medidorRef.current) return;
+    medidorRef.current.measureInWindow((x, y, w, h) => {
+      const fundo = y + h;                                  // onde o cartão termina
+      const precisa = Math.max(0, fundo - (topo - 12));     // 12px de folga acima do teclado
+      const maximo = Math.max(0, y - 60);                   // não passa do topo da tela
+      Animated.timing(deslocY, {
+        toValue: -Math.min(precisa, maximo),
+        duration: 180,
+        useNativeDriver: true,
+      }).start();
+    });
+  };
+
+  useEffect(() => {
+    const abrir = Keyboard.addListener('keyboardDidShow', (ev) => {
+      topoTeclado.current = ev.endCoordinates?.screenY ?? null;
+      // espera 300 ms: se a tela já rolou sozinha, mede a posição final
+      setTimeout(ajustarAoTeclado, 300);
+    });
+    const fechar = Keyboard.addListener('keyboardDidHide', () => {
+      topoTeclado.current = null;
+      Animated.timing(deslocY, { toValue: 0, duration: 150, useNativeDriver: true }).start();
+    });
+    return () => { abrir.remove(); fechar.remove(); };
+  }, []);
+
+  // trocar de passo (e-mail -> código) muda a altura do cartão: reajusta
+  useEffect(() => {
+    if (topoTeclado.current != null) setTimeout(ajustarAoTeclado, 120);
+  }, [passo]);
 
   useEffect(() => {
     (async () => {
@@ -75,38 +113,41 @@ export default function CartoesSeguranca() {
         </View>
       )}
 
-      <View style={[s.card, e.card]}>
-        <View style={e.cabeca}>
-          <View style={[e.icone, { backgroundColor: cor.ambar + '22' }]}>
-            <MaterialCommunityIcons name="email-outline" size={26} color={cor.ambar} />
+      {/* View de fora fica parada (mede a posição); o cartão de dentro é que sobe */}
+      <View ref={medidorRef} collapsable={false}>
+        <Animated.View style={[s.card, e.card, { transform: [{ translateY: deslocY }] }]}>
+          <View style={e.cabeca}>
+            <View style={[e.icone, { backgroundColor: cor.ambar + '22' }]}>
+              <MaterialCommunityIcons name="email-outline" size={26} color={cor.ambar} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={e.titulo}>E-mail de recuperação</Text>
+              <Text style={e.desc}>{emailSalvo ? `Cadastrado: ${mascarar(emailSalvo)}` : 'Use se esquecer a senha'}</Text>
+            </View>
           </View>
-          <View style={{ flex: 1 }}>
-            <Text style={e.titulo}>E-mail de recuperação</Text>
-            <Text style={e.desc}>{emailSalvo ? `Cadastrado: ${mascarar(emailSalvo)}` : 'Use se esquecer a senha'}</Text>
-          </View>
-        </View>
 
-        {passo === 'form' ? (
-          <>
-            <TextInput style={s.input} placeholder={emailSalvo ? 'Novo e-mail' : 'Seu e-mail'} autoCapitalize="none"
-              autoCorrect={false} keyboardType="email-address" value={email} onChangeText={setEmail} />
-            <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.verde }, carreg && { opacity: 0.6 }]} onPress={enviar} disabled={carreg}>
-              {carreg ? <ActivityIndicator color={cor.branco} /> : <Text style={s.botaoGrandeTxt}>Enviar código</Text>}
-            </TouchableOpacity>
-          </>
-        ) : (
-          <>
-            <TextInput style={s.input} placeholder="Código de 6 dígitos" keyboardType="number-pad" maxLength={6}
-              value={codigo} onChangeText={setCodigo} />
-            <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.verde }, carreg && { opacity: 0.6 }]} onPress={confirmar} disabled={carreg}>
-              {carreg ? <ActivityIndicator color={cor.branco} /> : <Text style={s.botaoGrandeTxt}>Confirmar e-mail</Text>}
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => { setPasso('form'); setCodigo(''); setMsg(''); }}>
-              <Text style={s.link}>Trocar e-mail</Text>
-            </TouchableOpacity>
-          </>
-        )}
-        {!!msg && <Text style={{ color: cor.azul, marginTop: 10, lineHeight: 20 }}>{msg}</Text>}
+          {passo === 'form' ? (
+            <>
+              <TextInput style={s.input} placeholder={emailSalvo ? 'Novo e-mail' : 'Seu e-mail'} autoCapitalize="none"
+                autoCorrect={false} keyboardType="email-address" value={email} onChangeText={setEmail} />
+              <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.verde }, carreg && { opacity: 0.6 }]} onPress={enviar} disabled={carreg}>
+                {carreg ? <ActivityIndicator color={cor.branco} /> : <Text style={s.botaoGrandeTxt}>Enviar código</Text>}
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <TextInput style={s.input} placeholder="Código de 6 dígitos" keyboardType="number-pad" maxLength={6}
+                value={codigo} onChangeText={setCodigo} />
+              <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.verde }, carreg && { opacity: 0.6 }]} onPress={confirmar} disabled={carreg}>
+                {carreg ? <ActivityIndicator color={cor.branco} /> : <Text style={s.botaoGrandeTxt}>Confirmar e-mail</Text>}
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => { setPasso('form'); setCodigo(''); setMsg(''); }}>
+                <Text style={s.link}>Trocar e-mail</Text>
+              </TouchableOpacity>
+            </>
+          )}
+          {!!msg && <Text style={{ color: cor.azul, marginTop: 10, lineHeight: 20 }}>{msg}</Text>}
+        </Animated.View>
       </View>
     </>
   );
