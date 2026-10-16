@@ -9,9 +9,10 @@ import * as Crypto from 'expo-crypto';
 export const SERVIDOR = 'https://minutoseguro-server.onrender.com'; // sem barra no final
 export const APP_KEY = 'minuto2026chaveapp'; // igual à APP_KEY do Render (Environment)
 
-const ROTA_CONECTAR = '/mp/conectar'; // responde { url: 'https://auth.mercadopago...' }
-const ROTA_STATUS = '/mp/status';     // responde { conectado: true/false, mp_user_id }
-const ROTA_PLANO = '/mp/plano';       // responde { emTeste, diasRestantes, taxaPercentual }
+const ROTA_CONECTAR = '/mp/conectar';       // responde { url: 'https://auth.mercadopago...' }
+const ROTA_DESCONECTAR = '/mp/desconectar'; // apaga a conta conectada deste celular
+const ROTA_STATUS = '/mp/status';           // responde { conectado: true/false, mp_user_id, aviso }
+const ROTA_PLANO = '/mp/plano';             // responde { emTeste, diasRestantes, taxaPercentual, aviso }
 
 export function configuracaoPendente() {
   return (
@@ -77,17 +78,33 @@ export async function statusMercadoPago() {
   return { conectado: !!j.conectado, mp_user_id: j.mp_user_id };
 }
 
-// Teste grátis: { emTeste, diasRestantes, taxaPercentual }
+// Teste grátis: { emTeste, diasRestantes, taxaPercentual, aviso }
 export const planoMP = () => chamar('GET', ROTA_PLANO);
 
-// Pede ao servidor o endereço de autorização e abre no navegador.
-// Depois de autorizar, o usuário volta ao app e a tela confere de novo.
-export async function conectarMercadoPago() {
+// Pede ao servidor o endereço de autorização (vale 10 minutos).
+async function pedirUrlDeConexao() {
   if (configuracaoPendente()) throw new Error('Falta preencher SERVIDOR e APP_KEY em src/nuvem.js');
   const j = await chamar('POST', ROTA_CONECTAR, {});
   const url = j.url || j.link || j.auth_url || j.init_point;
   if (!url) throw new Error('O servidor não devolveu o endereço de autorização do Mercado Pago.');
+  return url;
+}
+
+// Pede o endereço e abre no navegador.
+// Depois de autorizar, o usuário volta ao app e a tela confere de novo.
+export async function conectarMercadoPago() {
+  const url = await pedirUrlDeConexao();
   await Linking.openURL(url);
+  return true;
+}
+
+// Só devolve o endereço, sem abrir: serve para compartilhar o link (WhatsApp, aba anônima, celular do cliente).
+export const urlConexaoMercadoPago = () => pedirUrlDeConexao();
+
+// Desconecta a conta do Mercado Pago deste celular (o histórico de pagamentos continua).
+export async function desconectarMercadoPago() {
+  if (configuracaoPendente()) throw new Error('Falta preencher SERVIDOR e APP_KEY em src/nuvem.js');
+  await chamar('POST', ROTA_DESCONECTAR, {});
   return true;
 }
 

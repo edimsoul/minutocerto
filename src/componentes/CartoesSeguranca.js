@@ -1,12 +1,14 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert, StyleSheet, Animated, Keyboard } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { s } from '../estilos';
 import { cor } from '../tema';
 import { digitalDisponivel, digitalAtiva, definirDigital, pedirDigital } from '../biometria';
 import { pedirCodigo, confirmarCodigo, lerEmailCadastrado, salvarEmailCadastrado, mascarar } from '../recuperacao';
+import { guardarToken, fazerBackup } from '../backup';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const TAM_CODIGO = 8; // tem que ser igual ao "Email OTP Length" do Supabase
 
 export default function CartoesSeguranca() {
   const [bioDisp, setBioDisp] = useState(false);
@@ -20,10 +22,10 @@ export default function CartoesSeguranca() {
 
   // --- Subir o cartão de e-mail acima do teclado ---
   const medidorRef = useRef(null);            // View de fora (não se move): serve só para medir
-  const deslocY = useRef(new Animated.Value(0)).current; // quanto o cartão sobe
+  const [deslocY] = useState(() => new Animated.Value(0)); // quanto o cartão sobe
   const topoTeclado = useRef(null);           // posição (screenY) do topo do teclado, null = fechado
 
-  const ajustarAoTeclado = () => {
+  const ajustarAoTeclado = useCallback(() => {
     const topo = topoTeclado.current;
     if (topo == null || !medidorRef.current) return;
     medidorRef.current.measureInWindow((x, y, w, h) => {
@@ -36,7 +38,7 @@ export default function CartoesSeguranca() {
         useNativeDriver: true,
       }).start();
     });
-  };
+  }, [deslocY]);
 
   useEffect(() => {
     const abrir = Keyboard.addListener('keyboardDidShow', (ev) => {
@@ -49,12 +51,12 @@ export default function CartoesSeguranca() {
       Animated.timing(deslocY, { toValue: 0, duration: 150, useNativeDriver: true }).start();
     });
     return () => { abrir.remove(); fechar.remove(); };
-  }, []);
+  }, [ajustarAoTeclado, deslocY]);
 
   // trocar de passo (e-mail -> código) muda a altura do cartão: reajusta
   useEffect(() => {
     if (topoTeclado.current != null) setTimeout(ajustarAoTeclado, 120);
-  }, [passo]);
+  }, [passo, ajustarAoTeclado]);
 
   useEffect(() => {
     (async () => {
@@ -83,12 +85,16 @@ export default function CartoesSeguranca() {
   };
 
   const confirmar = async () => {
-    if (codigo.trim().length !== 6) return setMsg('Digite o código de 6 dígitos.');
+    if (codigo.trim().length !== TAM_CODIGO) return setMsg(`Digite o código de ${TAM_CODIGO} dígitos.`);
     setCarreg(true); setMsg('');
     const em = email.trim().toLowerCase();
     const r = await confirmarCodigo(em, codigo.trim());
     setCarreg(false);
     if (!r.ok) return setMsg(r.erro);
+    if (r.token) {
+      await guardarToken(r.token); // ativa o backup na nuvem
+      fazerBackup(); // primeiro backup, em segundo plano
+    }
     await salvarEmailCadastrado(em);
     setEmailSalvo(em); setEmail(''); setCodigo(''); setPasso('form'); setMsg('');
     Alert.alert('Pronto', 'E-mail de recuperação cadastrado.');
@@ -136,7 +142,7 @@ export default function CartoesSeguranca() {
             </>
           ) : (
             <>
-              <TextInput style={s.input} placeholder="Código de 6 dígitos" keyboardType="number-pad" maxLength={6}
+              <TextInput style={s.input} placeholder={`Código de ${TAM_CODIGO} dígitos`} keyboardType="number-pad" maxLength={TAM_CODIGO}
                 value={codigo} onChangeText={setCodigo} />
               <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.verde }, carreg && { opacity: 0.6 }]} onPress={confirmar} disabled={carreg}>
                 {carreg ? <ActivityIndicator color={cor.branco} /> : <Text style={s.botaoGrandeTxt}>Confirmar e-mail</Text>}

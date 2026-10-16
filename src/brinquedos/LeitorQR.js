@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, Modal, Linking, Vibration, StyleSheet } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -11,9 +11,11 @@ export default function LeitorQR({ visivel, titulo, onLido, onFechar }) {
   const [lanterna, setLanterna] = useState(false);
   const travado = useRef(false);
 
-  useEffect(() => {
-    if (visivel) { travado.current = false; setLanterna(false); }
-  }, [visivel]);
+  // a cada vez que o modal abre: destrava a leitura e apaga a lanterna
+  const aoAbrir = () => {
+    travado.current = false;
+    setLanterna(false);
+  };
 
   const aoLer = ({ data }) => {
     if (travado.current || !data) return;
@@ -23,7 +25,7 @@ export default function LeitorQR({ visivel, titulo, onLido, onFechar }) {
   };
 
   return (
-    <Modal visible={visivel} animationType="slide" onRequestClose={onFechar}>
+    <Modal visible={visivel} animationType="slide" onShow={aoAbrir} onRequestClose={onFechar}>
       <View style={e.tela}>
         {!perm ? null : !perm.granted ? (
           <View style={e.aviso}>

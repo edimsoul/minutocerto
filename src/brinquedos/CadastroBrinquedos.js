@@ -1,16 +1,14 @@
-// Cadastro dos brinquedos: tipo, cor, número e QR Code (lido da etiqueta ou gerado pelo app).
+
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Modal, Alert, StyleSheet } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Print from 'expo-print';
-import * as Sharing from 'expo-sharing';
 import LeitorQR from './LeitorQR';
 import { QRCodeView } from './qr';
 import { htmlEtiquetas } from './etiquetas';
 import { s } from '../estilos';
 import { cor, TIPOS, ICONES, CORES } from '../tema';
 import { rotuloBrinquedo, hexDaCor, ordenar } from './brinquedo';
-import * as FileSystem from 'expo-file-system/legacy';
 import AreaTeclado from '../componentes/AreaTeclado';
 export default function CadastroBrinquedos({ brinq }) {
   const [categoria, setCategoria] = useState(TIPOS[0]);

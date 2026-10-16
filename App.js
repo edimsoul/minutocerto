@@ -1,11 +1,7 @@
-// App.js só direciona: carrega os dados, mostra login/menu e escolhe qual tela abrir.
-// O que cada aluguel faz fica na própria pasta:
-//   src/brinquedos  -> aluguel de brinquedos (QR Code)
-//   src/pula        -> pula-pula
-//   src/telas       -> telas comuns (login, relatório, valor, Mercado Pago, acesso, feedback, menu)
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { s } from './src/estilos';
 import { cor, VERSAO } from './src/tema';
@@ -36,7 +32,7 @@ const TITULOS = {
   mp: 'Mercado Pago', acesso: 'Usuário e senha', feedback: 'Feedback',
 };
 
-export default function App() {
+function Principal() {
   const [tela, setTela] = useState('inicio');
   const [menu, setMenu] = useState(false);
   const [logado, setLogado] = useState(false);
@@ -45,9 +41,9 @@ export default function App() {
   const historico = useHistorico();
   const brinq = useBrinquedos();
   const pula = usePulaPula();
-  const baixando = useAtualizacao();
+  const baixando = useAtualizacao(!logado);
 
-  const modo = config.modo || 'veiculos'; // 'veiculos' = brinquedos | 'pula'
+  const modo = config.modo || 'veiculos'; 
 
   useVoltarAndroid({
     logado, menu, tela,
@@ -55,17 +51,14 @@ export default function App() {
     irInicio: () => setTela('inicio'),
   });
 
-  // a senha não vai para a nuvem (ajuste o nome do campo se for outro)
-
   useSincronizacao(
-  { config, historico: historico.lista, brinquedos: brinq.itens, pula },
-  logado && configPronta,
-  VERSAO,
-);
+    { config, historico: historico.lista, brinquedos: brinq.itens, pula },
+    logado && configPronta,
+    VERSAO,
+  );
 
   useEffect(() => { registrarAcesso('abriu_app', null, VERSAO); }, []);
 
-  // recuperação de senha: apaga tudo deste celular (como reinstalar o app)
   const resetarTudo = async () => {
     registrarAcesso('reset_senha', null, VERSAO);
     await apagarTudo();
@@ -91,7 +84,6 @@ export default function App() {
 
   return (
     <View style={s.tela}>
-      <StatusBar style="dark" />
       {aviso}
 
       <View style={s.topo}>
@@ -104,7 +96,6 @@ export default function App() {
           </View>
         ) : (
           <TouchableOpacity style={{ flex: 1 }} onPress={() => setTela('inicio')}>
-            
             <Text style={s.titulo}>{TITULOS[tela]}</Text>
           </TouchableOpacity>
         )}
@@ -128,7 +119,7 @@ export default function App() {
       </View>
 
       {tela === 'inicio' && (
-        <View style={{ paddingVertical: 8, alignItems: 'center', borderTopWidth: 1, borderColor: cor.linha, backgroundColor: cor.branco, marginBottom: 12, }}>
+        <View style={{ paddingVertical: 8, alignItems: 'center', borderTopWidth: 1, borderColor: cor.linha, backgroundColor: cor.branco, marginBottom: 12 }}>
           <Text style={{ fontSize: 12, color: cor.suave }}>MinutoCerto · versão {VERSAO}</Text>
         </View>
       )}
@@ -141,5 +132,25 @@ export default function App() {
         onSair={() => { registrarAcesso('logout', config.usuario, VERSAO); setMenu(false); setTela('inicio'); setLogado(false); }}
       />
     </View>
+  );
+}
+
+function Moldura({ children }) {
+  const i = useSafeAreaInsets();
+  return (
+    <View style={{ flex: 1, paddingTop: i.top, paddingBottom: i.bottom, backgroundColor: cor.fundo }}>
+      {children}
+    </View>
+  );
+}
+
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <StatusBar style="dark" />
+      <Moldura>
+        <Principal />
+      </Moldura>
+    </SafeAreaProvider>
   );
 }

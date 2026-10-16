@@ -19,13 +19,13 @@
         "buildType": "apk"
       }
     },
-    "production": {
+    "producao-apk": {
       "channel": "production",
       "autoIncrement": true,
       "android": {
         "buildType": "apk"
       }
-    }
+    },
   },
   "submit": {
     "production": {

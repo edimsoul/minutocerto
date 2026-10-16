@@ -9,6 +9,7 @@ export const CHAVES = {
   historico: '@mc:historico',
   config: '@mc:config',
   migrado: '@mc:migrado',
+  backupMeta: '@mc:backup_meta', // situação do backup (último envio, erros, próxima tentativa)
 };
 const LEGADO = '@minutocerto:v1'; // formato antigo (tudo junto)
 

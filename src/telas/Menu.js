@@ -2,7 +2,7 @@ import React from 'react';
 import {
   Modal, View, Text, TouchableOpacity, ScrollView, Image, StyleSheet, Platform, StatusBar as RNStatusBar,
 } from 'react-native';
-import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { cor, LOGO, VERSAO } from '../tema';
 
@@ -11,8 +11,21 @@ const PERFIS = [
   ['pula', 'Pula-pula', 'human-handsup'],
 ];
 
-// Menu em tela cheia, com um card (e ícone) para cada opção
-export default function Menu({ visivel, modo, onFechar, onModo, onIr, onSair }) {
+// Menu em tela cheia, com um card (e ícone) para cada opção.
+// O Modal é outra janela: por isso tem o próprio SafeAreaProvider (margens da câmera e dos botões do Android).
+export default function Menu(props) {
+  return (
+    <Modal animationType="slide" visible={props.visivel} statusBarTranslucent onRequestClose={props.onFechar}>
+      <SafeAreaProvider>
+        <Corpo {...props} />
+      </SafeAreaProvider>
+    </Modal>
+  );
+}
+
+function Corpo({ modo, onFechar, onModo, onIr, onSair }) {
+  const insets = useSafeAreaInsets();
+  const topo = insets.top || (Platform.OS === 'android' ? RNStatusBar.currentHeight || 24 : 44);
   const itens = [
     { k: 'inicio', n: 'Início', d: 'Marcar o tempo', icone: modo === 'pula' ? 'human-handsup' : 'timer-outline', c: cor.verde },
     ...(modo === 'veiculos'
@@ -22,13 +35,13 @@ export default function Menu({ visivel, modo, onFechar, onModo, onIr, onSair }) 
     { k: 'valor', n: 'Valor do minuto', d: 'Preço por minuto', icone: 'currency-brl', c: cor.ambar },
     { k: 'mp', n: 'Mercado Pago', d: 'Pix e token', icone: 'qrcode', c: cor.azul },
     { k: 'acesso', n: 'Usuário e senha', d: 'Seu acesso', icone: 'account-lock', c: cor.tinta },
+    { k: 'backup', n: 'Backup', d: 'Salvar na nuvem', icone: 'cloud-upload-outline', c: cor.azul },
     { k: 'feedback', n: 'Feedback', d: 'Avalie pelo WhatsApp', icone: 'message-star-outline', c: '#1FA855' },
   ];
 
   return (
-    <Modal animationType="slide" visible={visivel} onRequestClose={onFechar}>
-      <View style={e.tela}>
-        <StatusBar style="dark" />
+      <View style={[e.tela, { paddingTop: topo, paddingBottom: insets.bottom }]}>
+        <RNStatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
         <View style={e.topo}>
           <Image source={LOGO} style={e.logo} resizeMode="contain" />
           <Text style={e.titulo}>Menu</Text>
@@ -74,12 +87,11 @@ export default function Menu({ visivel, modo, onFechar, onModo, onIr, onSair }) 
           <Text style={e.versao}>Versão {VERSAO}</Text>
         </ScrollView>
       </View>
-    </Modal>
   );
 }
 
 const e = StyleSheet.create({
-  tela: { flex: 1, backgroundColor: cor.fundo, paddingTop: Platform.OS === 'android' ? RNStatusBar.currentHeight || 24 : 44 },
+  tela: { flex: 1, backgroundColor: cor.fundo },
   topo: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 },
   logo: { width: 44, height: 44, marginRight: 12 },
   titulo: { flex: 1, fontSize: 26, fontWeight: '800', color: cor.tinta },
@@ -94,5 +106,5 @@ const e = StyleSheet.create({
   cartaoIcone: { width: 52, height: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginBottom: 10 },
   cartaoTitulo: { fontSize: 16, fontWeight: '800', color: cor.tinta },
   cartaoDesc: { fontSize: 12, color: cor.suave, marginTop: 2 },
-  versao: { textAlign: 'center', fontSize: 12, color: cor.suave, paddingVertical: 10, marginBottom: 5, },
+  versao: { textAlign: 'center', fontSize: 12, color: cor.suave, paddingVertical: 10, marginBottom: 5 },
 });

@@ -1,8 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, AppState } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, AppState, Alert, Share } from 'react-native';
 import { s } from '../estilos';
 import { cor } from '../tema';
-import { conectarMercadoPago, statusMercadoPago, testarServidor, planoMP, configuracaoPendente } from '../nuvem';
+import {
+  conectarMercadoPago, statusMercadoPago, testarServidor, planoMP, configuracaoPendente,
+  desconectarMercadoPago, urlConexaoMercadoPago,
+} from '../nuvem';
 
 const MSG_PENDENTE = 'Falta preencher SERVIDOR e APP_KEY no arquivo src/nuvem.js.';
 
@@ -25,6 +28,7 @@ export default function MercadoPago() {
   const [carregando, setCarregando] = useState(true);
   const [conectando, setConectando] = useState(false);
   const [testando, setTestando] = useState(false);
+  const [desconectando, setDesconectando] = useState(false);
   const [erro, setErro] = useState('');
   const [aviso, setAviso] = useState('');
 
@@ -70,6 +74,51 @@ export default function MercadoPago() {
     }
   };
 
+  // gera o link e abre o menu de compartilhar (WhatsApp, copiar, abrir em outro navegador...)
+  const enviarLink = async () => {
+    if (configuracaoPendente()) return setErro(MSG_PENDENTE);
+    setErro('');
+    setAviso('Gerando o link...');
+    try {
+      const url = await urlConexaoMercadoPago();
+      setAviso('O link vale por 10 minutos. Abra-o no navegador da conta que será conectada.');
+      await Share.share({
+        message: `Para conectar a conta do Mercado Pago ao MinutoCerto, abra este link em até 10 minutos:\n${url}`,
+      });
+    } catch (err) {
+      setAviso('');
+      setErro(explicar(err));
+    }
+  };
+
+  const desconectar = () => {
+    Alert.alert(
+      'Desconectar conta',
+      'O app deixa de cobrar nesta conta do Mercado Pago. Os pagamentos já feitos continuam registrados. Desconectar?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Desconectar',
+          style: 'destructive',
+          onPress: async () => {
+            setDesconectando(true);
+            setErro('');
+            try {
+              await desconectarMercadoPago();
+              await atualizar();
+              setAviso('Conta desconectada. Agora você pode conectar outra.');
+            } catch (err) {
+              setAviso('');
+              setErro(explicar(err));
+            } finally {
+              setDesconectando(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const testar = async () => {
     setTestando(true);
     setErro('');
@@ -88,7 +137,7 @@ export default function MercadoPago() {
   const conectado = estado && estado.conectado;
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 14 }}>
+    <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 120 }}>
       <View style={s.card}>
         <Text style={s.rotulo}>Conta Mercado Pago</Text>
         {carregando ? (
@@ -108,11 +157,13 @@ export default function MercadoPago() {
               : `Teste encerrado. Cada Pix paga ${String(plano.taxaPercentual).replace('.', ',')}% pelo uso do software e manutenção do servidor.`}
           </Text>
         )}
+        {!!plano && !!plano.aviso && (
+          <Text style={{ color: cor.suave, marginTop: 6, lineHeight: 20, fontSize: 13 }}>{plano.aviso}</Text>
+        )}
 
         {!!erro && <Text style={{ color: cor.vermelho, marginTop: 10, lineHeight: 20 }}>{erro}</Text>}
         {!!aviso && <Text style={{ color: cor.azul, marginTop: 10, lineHeight: 20 }}>{aviso}</Text>}
 
-        {/* cores definidas aqui mesmo para o botão nunca ficar invisível */}
         <TouchableOpacity
           style={[
             { backgroundColor: '#009EE3', paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginTop: 16 },
@@ -129,6 +180,28 @@ export default function MercadoPago() {
               </Text>
             )}
         </TouchableOpacity>
+
+        <TouchableOpacity
+          style={{ borderWidth: 2, borderColor: '#009EE3', paddingVertical: 13, borderRadius: 12, alignItems: 'center', marginTop: 10 }}
+          onPress={enviarLink}
+        >
+          <Text style={{ color: '#009EE3', fontWeight: '800', fontSize: 15 }}>Enviar link de conexão</Text>
+        </TouchableOpacity>
+
+        {/* sempre visível, para você conseguir desconectar mesmo se a tela não reconhecer a conta */}
+        <TouchableOpacity
+          style={[
+            { borderWidth: 2, borderColor: '#D23C3C', paddingVertical: 13, borderRadius: 12, alignItems: 'center', marginTop: 10 },
+            desconectando && { opacity: 0.6 },
+          ]}
+          onPress={desconectar}
+          disabled={desconectando}
+        >
+          {desconectando
+            ? <ActivityIndicator color="#D23C3C" />
+            : <Text style={{ color: '#D23C3C', fontWeight: '800', fontSize: 15 }}>Desconectar esta conta</Text>}
+        </TouchableOpacity>
+
         <TouchableOpacity onPress={atualizar}><Text style={s.link}>Verificar novamente</Text></TouchableOpacity>
         <TouchableOpacity onPress={testar} disabled={testando}>
           <Text style={[s.link, { color: cor.suave }]}>{testando ? 'Testando...' : 'Testar conexão com o servidor'}</Text>
@@ -137,6 +210,10 @@ export default function MercadoPago() {
         <Text style={s.ajuda}>
           Entrar com seu login do mercado pago, autoriza o MinutoCerto e volta para o app.
           A senha do Mercado Pago não passa por aqui.
+        </Text>
+        <Text style={[s.ajuda, { marginTop: 8 }]}>
+          Se o navegador abrir direto na conta errada, toque em &quot;Enviar link de conexão&quot; e abra o link em uma
+          aba anônima, ou no celular do cliente.
         </Text>
       </View>
     </ScrollView>

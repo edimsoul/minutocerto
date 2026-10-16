@@ -127,7 +127,7 @@ export default function Login({ config, setConfig, onEntrar, onResetar }) {
 
   const confirmarCadastro = async () => {
     if (carreg) return;
-    if (codigo.trim().length !== 6) return setMsg('Digite o código de 6 dígitos.');
+    if (codigo.trim().length !== 8) return setMsg('Digite o código de 8 dígitos.');
     setCarreg(true); setMsg('');
     const em = normalizar(emailNovo);
     const r = await confirmarCodigo(em, codigo.trim());
@@ -165,7 +165,7 @@ export default function Login({ config, setConfig, onEntrar, onResetar }) {
 
   const redefinir = async () => {
     if (carreg) return;
-    if (codigo.trim().length !== 6) return setMsg('Digite o código de 6 dígitos.');
+    if (codigo.trim().length !== 8) return setMsg('Digite o código de 6 dígitos.');
     if (nova.length < 4) return setMsg('A senha nova precisa ter pelo menos 4 caracteres.');
     if (nova !== nova2) return setMsg('As duas senhas precisam ser iguais.');
     setCarreg(true); setMsg('');
@@ -272,10 +272,10 @@ export default function Login({ config, setConfig, onEntrar, onResetar }) {
               <Text style={e.modalTxt}>Digite o código enviado para {mascarar(emailNovo)}.</Text>
               <TextInput
                 style={s.input}
-                placeholder="Código de 6 dígitos"
+                placeholder="Código de 8 dígitos"
                 placeholderTextColor={PH}
                 keyboardType="number-pad"
-                maxLength={6}
+                maxLength={8}
                 value={codigo}
                 onChangeText={setCodigo}
               />

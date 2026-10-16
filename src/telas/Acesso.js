@@ -47,7 +47,7 @@ export default function Acesso({ config, setConfig }) {
     if (nova) { salt = Crypto.randomUUID(); senhaHash = await hashSenha(nova, salt); }
     try {
       await gravarCred(salt, senhaHash);
-    } catch (e) {
+    } catch {
       return Alert.alert('Erro ao salvar', 'Nada foi alterado. Sua senha atual continua valendo. Tente de novo.');
     }
     setConfig({ ...config, usuario: usuario.trim(), salt, senhaHash });
@@ -55,10 +55,6 @@ export default function Acesso({ config, setConfig }) {
     Keyboard.dismiss();
     Alert.alert('Salvo', 'Usuário e senha atualizados.');
   };
-
-  // guarda a posição de cada card e campo
-  const noCard = (k) => (ev) => { cardY.current[k] = ev.nativeEvent.layout.y; };
-  const noCampo = (k) => (ev) => { campoY.current[k] = ev.nativeEvent.layout.y; };
 
   return (
     <ScrollView
@@ -68,7 +64,7 @@ export default function Acesso({ config, setConfig }) {
       keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
     >
       {/* Card 1: usuário */}
-      <View style={[s.card, e.card]} onLayout={noCard('usuario')}>
+      <View style={[s.card, e.card]} onLayout={(ev) => { cardY.current.usuario = ev.nativeEvent.layout.y; }}>
         <View style={e.cabeca}>
           <View style={[e.icone, { backgroundColor: cor.azul + '22' }]}>
             <MaterialCommunityIcons name="account-outline" size={26} color={cor.azul} />
@@ -78,7 +74,7 @@ export default function Acesso({ config, setConfig }) {
             <Text style={e.desc}>Nome usado para entrar no app</Text>
           </View>
         </View>
-        <View onLayout={noCampo('usuario')}>
+        <View onLayout={(ev) => { campoY.current.usuario = ev.nativeEvent.layout.y; }}>
           <TextInput
             style={s.input}
             placeholder="Usuário"
@@ -92,7 +88,7 @@ export default function Acesso({ config, setConfig }) {
       </View>
 
       {/* Card 2: senha */}
-      <View style={[s.card, e.card]} onLayout={noCard('senha')}>
+      <View style={[s.card, e.card]} onLayout={(ev) => { cardY.current.senha = ev.nativeEvent.layout.y; }}>
         <View style={e.cabeca}>
           <View style={[e.icone, { backgroundColor: cor.verde + '22' }]}>
             <MaterialCommunityIcons name="lock-outline" size={26} color={cor.verde} />
@@ -104,19 +100,19 @@ export default function Acesso({ config, setConfig }) {
         </View>
 
         <Text style={s.rotulo}>Senha atual</Text>
-        <View onLayout={noCampo('atual')}>
+        <View onLayout={(ev) => { campoY.current.atual = ev.nativeEvent.layout.y; }}>
           <CampoSenha value={atual} onChangeText={setAtual} onFocus={() => rolarPara('senha', 'atual')} />
         </View>
 
         <Text style={[s.rotulo, { marginTop: 14 }]}>Nova senha (deixe vazio para manter)</Text>
-        <View onLayout={noCampo('nova')}>
+        <View onLayout={(ev) => { campoY.current.nova = ev.nativeEvent.layout.y; }}>
           <CampoSenha value={nova} onChangeText={setNova} onFocus={() => rolarPara('senha', 'nova')} />
         </View>
 
         {!!nova && (
           <>
             <Text style={[s.rotulo, { marginTop: 14 }]}>Repita a nova senha</Text>
-            <View onLayout={noCampo('nova2')}>
+            <View onLayout={(ev) => { campoY.current.nova2 = ev.nativeEvent.layout.y; }}>
               <CampoSenha value={nova2} onChangeText={setNova2} onFocus={() => rolarPara('senha', 'nova2')} />
             </View>
           </>
