@@ -1,44 +1,50 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, ActivityIndicator, Alert, ScrollView, StyleSheet, AppState } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert, ScrollView, StyleSheet, AppState } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { temToken, lerStatus, fazerBackup, apagarBackupNuvem } from '../backup';
+import { temToken, lerStatus, fazerBackup, apagarBackupNuvem, ativarBackupLivre } from '../backup';
 import { s } from '../estilos';
 import { cor } from '../tema';
 
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const dataBR = (ms) =>
   new Date(ms).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-// Tela do menu: backup na nuvem (ligado ao e-mail de recuperação confirmado).
 export default function BackupTela() {
   const [ativo, setAtivo] = useState(false);
   const [status, setStatus] = useState({});
+  const [email, setEmail] = useState('');
   const [carreg, setCarreg] = useState(false);
   const [msg, setMsg] = useState('');
 
   const recarregar = useCallback(async () => {
     try {
-      const t = await temToken();
-      const st = await lerStatus();
-      console.log('[BackupTela] temToken:', t, 'status:', st); // pode remover depois de testar
-      setAtivo(!!t);
-      setStatus(st || {});
-    } catch (err) {
-      console.log('[BackupTela] erro ao recarregar:', err);
-    }
+      setAtivo(!!(await temToken()));
+      setStatus((await lerStatus()) || {});
+    } catch (err) {}
   }, []);
 
-  // carrega ao abrir a tela
-  useEffect(() => {
-    recarregar();
-  }, [recarregar]);
+  useEffect(() => { recarregar(); }, [recarregar]);
 
-  // recarrega também quando o app volta para o primeiro plano
   useEffect(() => {
     const sub = AppState.addEventListener('change', (estado) => {
       if (estado === 'active') recarregar();
     });
     return () => sub.remove();
   }, [recarregar]);
+
+  const ativar = async () => {
+    if (carreg) return;
+    const em = email.trim().toLowerCase();
+    if (!EMAIL.test(em)) return setMsg('Digite um e-mail válido.');
+    setCarreg(true); setMsg('');
+    const r = await ativarBackupLivre(em);
+    if (!r.ok) { setCarreg(false); return setMsg(r.erro); }
+    const b = await fazerBackup({ forcar: true });
+    setCarreg(false);
+    setEmail('');
+    await recarregar();
+    setMsg(b.ok ? (b.pulou === 'vazio' ? 'Backup ativado. Ele começa quando houver dados.' : 'Backup ativado e enviado.') : 'Backup ativado, mas o envio falhou: ' + (b.erro || 'tente de novo.'));
+  };
 
   const fazerAgora = async () => {
     if (carreg) return;
@@ -66,8 +72,10 @@ export default function BackupTela() {
     ]);
   };
 
+  const precisaAtivar = !ativo || status.sessaoExpirada;
+
   return (
-    <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 30 }}>
+    <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 30 }} keyboardShouldPersistTaps="handled">
       <View style={[s.card, e.card]}>
         <View style={e.cabeca}>
           <View style={[e.icone, { backgroundColor: cor.azul + '22' }]}>
@@ -79,7 +87,7 @@ export default function BackupTela() {
               {!ativo
                 ? 'Desativado'
                 : status.sessaoExpirada
-                ? 'Sessão expirada: confirme o e-mail de novo'
+                ? 'Sessão expirada: ative de novo'
                 : status.ultimoEnvio
                 ? `Último envio: ${dataBR(status.ultimoEnvio)}`
                 : 'Ativo, ainda sem envio'}
@@ -87,25 +95,29 @@ export default function BackupTela() {
           </View>
         </View>
 
-        {!ativo || status.sessaoExpirada ? (
-          <Text style={e.txt}>
-            Para ativar, vá em Menu → Usuário e senha e confirme seu e-mail de recuperação. Depois volte aqui.
-          </Text>
+        {precisaAtivar ? (
+          <>
+            <Text style={e.txt}>Digite seu e-mail para ativar o backup. Ele guarda seus dados na nuvem e é enviado sozinho uma vez por dia.</Text>
+            <TextInput
+              style={s.input}
+              placeholder="Seu e-mail"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              value={email}
+              onChangeText={setEmail}
+            />
+            <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.verde }, carreg && { opacity: 0.6 }]} onPress={ativar} disabled={carreg}>
+              {carreg ? <ActivityIndicator color={cor.branco} /> : <Text style={s.botaoGrandeTxt}>Ativar backup</Text>}
+            </TouchableOpacity>
+          </>
         ) : (
           <>
             <Text style={e.txt}>O app envia um backup sozinho uma vez por dia. Aqui você pode enviar agora.</Text>
-            <TouchableOpacity
-              style={[s.botaoGrande, { backgroundColor: cor.verde }, carreg && { opacity: 0.6 }]}
-              onPress={fazerAgora}
-              disabled={carreg}
-            >
+            <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.verde }, carreg && { opacity: 0.6 }]} onPress={fazerAgora} disabled={carreg}>
               {carreg ? <ActivityIndicator color={cor.branco} /> : <Text style={s.botaoGrandeTxt}>Fazer backup agora</Text>}
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[s.botaoGrande, { backgroundColor: cor.vermelho, marginTop: 10 }, carreg && { opacity: 0.6 }]}
-              onPress={excluir}
-              disabled={carreg}
-            >
+            <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.vermelho, marginTop: 10 }, carreg && { opacity: 0.6 }]} onPress={excluir} disabled={carreg}>
               <Text style={s.botaoGrandeTxt}>Excluir backup da nuvem</Text>
             </TouchableOpacity>
           </>

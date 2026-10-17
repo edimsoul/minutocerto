@@ -1,4 +1,4 @@
-// Backup na nuvem ligado ao e-mail verificado (o mesmo da recuperação de senha).
+// Backup na nuvem ligado ao e-mail (o mesmo da recuperação de senha).
 import * as Crypto from 'expo-crypto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CHAVES, lerJSON, salvarJSON, sec, prontoMigracao } from './armazenamento';
@@ -58,7 +58,7 @@ export async function montarBackup() {
 // envia o backup. Nunca envia um aparelho vazio (para não empurrar um backup bom para fora das 7 versões)
 export async function fazerBackup({ forcar = false } = {}) {
   const token = await sec.get(CHAVE_TOKEN);
-  if (!token) return { ok: false, motivo: 'sem_token', erro: 'Confirme seu e-mail para ativar o backup.' };
+  if (!token) return { ok: false, motivo: 'sem_token', erro: 'Ative o backup informando seu e-mail.' };
 
   const meta = await lerJSON(CHAVES.backupMeta, {});
   const b = await montarBackup();
@@ -71,7 +71,7 @@ export async function fazerBackup({ forcar = false } = {}) {
   const r = await chamar('POST', '/backup', { conteudo: b.conteudo, hash: b.hash, versaoApp: VERSAO }, token);
   if (r.status === 401) {
     await salvarJSON(CHAVES.backupMeta, { ...meta, sessaoExpirada: true });
-    return { ok: false, motivo: 'sessao', erro: 'Sessão do backup expirou. Confirme seu e-mail de novo.' };
+    return { ok: false, motivo: 'sessao', erro: 'Sessão do backup expirou. Ative de novo.' };
   }
   if (!r.ok) return { ok: false, erro: r.erro || 'Não foi possível enviar o backup.' };
   await salvarJSON(CHAVES.backupMeta, { ultimoEnvio: Date.now(), ultimoHash: b.hash });
@@ -140,4 +140,12 @@ export async function apagarBackupNuvem() {
   if (!token) return { ok: false, erro: 'Sessão não encontrada.' };
   const r = await chamar('DELETE', '/backup', null, token);
   return { ok: r.ok, erro: r.erro };
+}
+
+// ativa o backup só com o e-mail (sem código). Se o e-mail já tem backup, o servidor recusa e pede o código.
+export async function ativarBackupLivre(email) {
+  const r = await chamar('POST', '/recuperacao/backup-livre', { email }, '');
+  if (!r.ok || !r.token) return { ok: false, erro: r.erro || 'Não foi possível ativar o backup.' };
+  await guardarToken(r.token);
+  return { ok: true };
 }
