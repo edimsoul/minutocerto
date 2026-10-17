@@ -12,6 +12,7 @@ import { useHistorico } from './src/historico';
 import { useVoltarAndroid } from './src/hooks';
 import { useAtualizacao, AvisoBaixando } from './src/atualizacao';
 import { useSincronizacao, registrarAcesso } from './src/sincronizacao';
+import { backupSeNecessario } from './src/backup';
 
 import { useBrinquedos } from './src/brinquedos/useBrinquedos';
 import Brinquedos from './src/brinquedos/Brinquedos';
@@ -26,10 +27,11 @@ import ValorMinuto from './src/telas/ValorMinuto';
 import MercadoPago from './src/telas/MercadoPago';
 import Acesso from './src/telas/Acesso';
 import Feedback from './src/telas/Feedback';
+import BackupTela from './src/telas/Backuptela';
 
 const TITULOS = {
   cadastro: 'Cadastro de brinquedos', relatorio: 'Relatório', valor: 'Valor do minuto',
-  mp: 'Mercado Pago', acesso: 'Usuário e senha', feedback: 'Feedback',
+  mp: 'Mercado Pago', acesso: 'Usuário e senha', backup: 'Backup na nuvem', feedback: 'Feedback',
 };
 
 function Principal() {
@@ -41,15 +43,17 @@ function Principal() {
   const historico = useHistorico();
   const brinq = useBrinquedos();
   const pula = usePulaPula();
-  const baixando = useAtualizacao(!logado);
+  const baixando = useAtualizacao(!logado); // só pergunta no carregamento/login
 
-  const modo = config.modo || 'veiculos'; 
+  const modo = config.modo || 'veiculos'; // 'veiculos' = brinquedos | 'pula'
 
   useVoltarAndroid({
     logado, menu, tela,
     fecharMenu: () => setMenu(false),
     irInicio: () => setTela('inicio'),
   });
+
+  // a senha não vai para a nuvem (ajuste o nome do campo se for outro)
 
   useSincronizacao(
     { config, historico: historico.lista, brinquedos: brinq.itens, pula },
@@ -59,6 +63,10 @@ function Principal() {
 
   useEffect(() => { registrarAcesso('abriu_app', null, VERSAO); }, []);
 
+  // backup automático na nuvem (no máximo 1 por dia; só se o e-mail já foi confirmado)
+  useEffect(() => { if (logado) backupSeNecessario(); }, [logado]);
+
+  // recuperação de senha: apaga tudo deste celular (como reinstalar o app)
   const resetarTudo = async () => {
     registrarAcesso('reset_senha', null, VERSAO);
     await apagarTudo();
@@ -115,6 +123,7 @@ function Principal() {
         {tela === 'valor' && <ValorMinuto config={config} setConfig={setConfig} />}
         {tela === 'mp' && <MercadoPago config={config} setConfig={setConfig} />}
         {tela === 'acesso' && <Acesso config={config} setConfig={setConfig} />}
+        {tela === 'backup' && <BackupTela />}
         {tela === 'feedback' && <Feedback />}
       </View>
 
@@ -127,7 +136,10 @@ function Principal() {
       <Menu
         visivel={menu} modo={modo}
         onFechar={() => setMenu(false)}
-        onModo={(m) => { setConfig({ ...config, modo: m }); setMenu(false); setTela('inicio'); }}
+        onModo={(m) => {
+          setConfig({ ...config, modo: m });
+          if (tela === 'cadastro' && m !== 'veiculos') setTela('inicio');
+        }}
         onIr={(t) => { setMenu(false); setTela(t); }}
         onSair={() => { registrarAcesso('logout', config.usuario, VERSAO); setMenu(false); setTela('inicio'); setLogado(false); }}
       />
@@ -135,6 +147,8 @@ function Principal() {
   );
 }
 
+// Margem de segurança para TODAS as telas (carregando, login e app logado):
+// desce abaixo da câmera/barra de status e sobe acima dos botões do Android.
 function Moldura({ children }) {
   const i = useSafeAreaInsets();
   return (

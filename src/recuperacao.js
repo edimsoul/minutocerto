@@ -15,7 +15,7 @@ async function chamar(rota, corpo) {
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) return { ok: false, erro: j.erro || `Erro ${r.status}` };
-    return { ok: true };
+    return { ok: true, token: j.token }; // repassa o token do backup (só vem em /codigo/confirmar)
   } catch (e) {
     return { ok: false, erro: e.name === 'AbortError'
       ? 'O servidor demorou demais. Tente de novo em um minuto.'

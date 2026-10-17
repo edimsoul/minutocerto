@@ -188,14 +188,16 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
   };
   const fecharDigitar = () => { setDigitando(false); setNumero(''); };
 
-  // botão Encerrar: abre a câmera para ler o QR do brinquedo a encerrar
-  const aoEncerrar = () => {
+  const aoEncerrar = (v) => {
+    if (v && (v.status === 'rodando' || v.status === 'pausado')) {
+      setLote([v.id]);
+      return;
+    }
     setLote([]);
     leuQRRef.current = false;
     setLendoEnc(true);
   };
 
-  // valida e coloca o brinquedo na lista de encerramento (vale para QR e para número digitado)
   const adicionarAoLote = (v) => {
     if (v.status !== 'rodando' && v.status !== 'pausado') {
       Alert.alert('Brinquedo não está em uso', `${rotuloBrinquedo(v)} está: ${STATUS[v.status]}.`);

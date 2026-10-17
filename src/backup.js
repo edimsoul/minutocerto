@@ -3,10 +3,7 @@ import * as Crypto from 'expo-crypto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CHAVES, lerJSON, salvarJSON, sec, prontoMigracao } from './armazenamento';
 import { VERSAO } from './tema';
-
-// ⚠️ use os MESMOS valores do seu recuperacao.js (se ele já exporta, importe de lá)
-const BASE = 'https://SEU-SERVIDOR.onrender.com';
-const APP_KEY = 'COLE_AQUI_A_MESMA_CHAVE_DO_APP';
+import { SERVIDOR as BASE, APP_KEY } from './nuvem';
 
 const CHAVE_TOKEN = 'mc_token'; // já é apagada pelo apagarTudo()
 const UM_DIA = 24 * 3600 * 1000;
@@ -14,13 +11,18 @@ const SEGREDOS_CONFIG = ['senhaHash', 'salt']; // nunca vão para a nuvem
 
 const sha = (t) => Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, t);
 
-export const guardarToken = (t) => sec.set(CHAVE_TOKEN, t);
+// guarda o token e limpa o aviso de "sessão expirada"
+export const guardarToken = async (t) => {
+  await sec.set(CHAVE_TOKEN, t);
+  const meta = await lerJSON(CHAVES.backupMeta, {});
+  await salvarJSON(CHAVES.backupMeta, { ...meta, sessaoExpirada: false });
+};
 export const temToken = async () => !!(await sec.get(CHAVE_TOKEN));
 export const lerStatus = () => lerJSON(CHAVES.backupMeta, {}); // { ultimoEnvio, ultimoHash, sessaoExpirada }
 
 async function chamar(metodo, caminho, corpo, token) {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 20000);
+  const timer = setTimeout(() => ctrl.abort(), 60000); // 60s: o Render gratuito demora para acordar
   try {
     const r = await fetch(BASE + caminho, {
       method: metodo,
@@ -79,7 +81,9 @@ export async function fazerBackup({ forcar = false } = {}) {
 // chame ao abrir o app e ao voltar para ele: só envia se o último envio tem mais de 24h
 export async function backupSeNecessario() {
   try {
+    if (!(await temToken())) return { ok: true, pulou: 'sem_token' };
     const meta = await lerJSON(CHAVES.backupMeta, {});
+    if (meta.sessaoExpirada) return { ok: true, pulou: 'sessao' };
     if (meta.ultimoEnvio && Date.now() - meta.ultimoEnvio < UM_DIA) return { ok: true, pulou: 'recente' };
     return await fazerBackup();
   } catch (e) {
