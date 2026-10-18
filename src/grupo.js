@@ -46,8 +46,9 @@ export const lerLocal = () => lerJSON(CHAVE, PADRAO);
 const gravar = async (v) => { conectado = !!v.conectado; await salvarJSON(CHAVE, v); };
 lerLocal().then((l) => { conectado = !!l.conectado; });
 
-export async function gerarCodigo() {
-  const r = await chamar('POST', '/gerar');
+// tamanho: 4 ou 6 dígitos
+export async function gerarCodigo(tamanho = 6) {
+  const r = await chamar('POST', '/gerar', { tamanho: tamanho === 4 ? 4 : 6 });
   if (r.ok) {
     const loc = await lerLocal();
     if (!loc.conectado) await gravar({ conectado: true, ultimo: r.ultimo || 0 });
