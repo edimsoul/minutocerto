@@ -19,6 +19,11 @@ export default function Cobranca({ principal, itens, preco, rotuloDe, onFinaliza
   const [motivo, setMotivo] = useState('Cortesia');
   const [outro, setOutro] = useState('');
 
+  // outro aparelho já cobrou e liberou este brinquedo: fecha a cobrança
+  useEffect(() => {
+    if (principal.status === 'livre') onFechar();
+  }, [principal.status]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // o servidor ainda não tem rota para cancelar Pix: aqui só se abandona o QR Code.
   // O Pix não pago vence sozinho no Mercado Pago.
   const cancelarPixAtual = () => {
@@ -40,7 +45,10 @@ export default function Cobranca({ principal, itens, preco, rotuloDe, onFinaliza
   const valor = Math.round(lista.reduce((a, v) => a + calcValor(v.acumulado, preco), 0) * 100) / 100;
 
   const alterna = (id) => setExtras((e) => (e.includes(id) ? e.filter((x) => x !== id) : [...e, id]));
-  const juntarAgora = (v) => { onFinalizarOutro(v); setExtras((e) => [...e, v.id]); };
+  // só junta se o servidor aceitou o encerramento (outro aparelho pode ter agido primeiro)
+  const juntarAgora = async (v) => {
+    if (await onFinalizarOutro(v)) setExtras((e) => [...e, v.id]);
+  };
 
   const rec = parseFloat(recebido.replace(',', '.')) || 0;
   const troco = Math.round((rec - valor) * 100) / 100;

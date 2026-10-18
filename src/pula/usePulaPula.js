@@ -1,46 +1,111 @@
+import { useRef } from 'react';
 import { usePersistente } from '../hooks';
 import { CHAVES } from '../armazenamento';
 import { decorrido } from '../util';
+import { executar, estaConectado, patchDoServidor, pendente } from '../grupo';
 
-// Dados e ações do pula-pula (guardados à parte dos brinquedos).
-// Cada item é uma pessoa: anota o nome, escolhe o tempo (pacote em minutos ou livre) e já começa a contar.
+const pacoteDe = (x) => (Number(x) > 0 ? Math.round(Number(x)) : null);
+
 export function usePulaPula() {
   const [itens, setItens, pronto] = usePersistente(CHAVES.pula, []);
-  const atualiza = (id, m) => setItens((vs) => vs.map((v) => (v.id === id ? { ...v, ...m } : v)));
+  const ref = useRef(itens);
+  ref.current = itens;
+  const timers = useRef({});
 
-  // Ao encerrar: se tem pacote, o mínimo cobrado é o tempo do pacote.
-  const tempoFinal = (v) => {
-    const ms = decorrido(v, Date.now());
-    const pacoteMs = v.pacote ? v.pacote * 60000 : 0;
-    return Math.max(ms, pacoteMs);
+  const atualiza = (id, m) => setItens((vs) => vs.map((v) => (v.id === id ? { ...v, ...m } : v)));
+  const achar = (v) => ref.current.find((x) => x.id === v.id) || v;
+
+  // com pacote, o mínimo cobrado é o tempo do pacote
+  const tempoFinal = (v) => Math.max(decorrido(v, Date.now()), v.pacote ? v.pacote * 60000 : 0);
+
+  const agir = (v, tipo, dados, local, pos, suave) =>
+    executar({
+      item: `p:${v.id}`, tipo, dados, local, suave,
+      base: achar(v).seq,
+      aplicar: (p) => atualiza(v.id, pos ? pos(p) : p),
+    });
+
+  const remover = (id) => setItens((vs) => vs.filter((v) => v.id !== id));
+
+  const encerrar = (v) =>
+    agir(
+      v, 'encerrar', {},
+      () => atualiza(v.id, { status: 'finalizado', acumulado: tempoFinal(v), inicio: 0 }),
+      (p) => ({ ...p, acumulado: Math.max(p.acumulado, achar(v).pacote ? achar(v).pacote * 60000 : 0) }),
+    );
+
+  const deServidor = (v, i) => {
+    const p = patchDoServidor(i);
+    const pacote = i.dados && 'pacote' in i.dados ? pacoteDe(i.dados.pacote) : v.pacote ?? null;
+    const minimo = pacote ? pacote * 60000 : 0;
+    return { ...v, ...p, pacote, acumulado: p.status === 'finalizado' ? Math.max(p.acumulado, minimo) : p.acumulado };
   };
-  const encerrar = (v) => atualiza(v.id, { status: 'finalizado', acumulado: tempoFinal(v), inicio: 0 });
 
   return {
     itens, pronto,
-    // pacote: número de minutos (5, 10, 15, qualquer outro) ou null = livre, por minutos
     adicionar: (nome, pacote = null) => {
-      const n = String(nome || '').trim() || `Pessoa ${itens.length + 1}`;
-      const p = Number(pacote) > 0 ? Math.round(Number(pacote)) : null;
-      setItens((vs) => [
-        ...vs,
-        {
-          id: `${Date.now()}-${Math.floor(Math.random() * 10000)}`, numero: n, tipo: 'Pula-pula', modo: 'pula',
-          status: 'rodando', inicio: Date.now(), acumulado: 0, pacote: p,
-        },
-      ]);
+      const n = String(nome || '').trim() || `Pessoa ${ref.current.length + 1}`;
+      const p = pacoteDe(pacote);
+      const id = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+      const novo = {
+        id, numero: n, tipo: 'Pula-pula', modo: 'pula',
+        status: 'rodando', inicio: Date.now(), acumulado: 0, pacote: p,
+      };
+      return executar({
+        item: `p:${id}`, tipo: 'iniciar', base: 0, dados: { numero: n, pacote: p },
+        local: () => setItens((vs) => [...vs, novo]),
+        aplicar: (pt) => setItens((vs) => [...vs, { ...novo, ...pt }]),
+      });
     },
     alterarPacote: (v, pacote) => {
-      const p = Number(pacote) > 0 ? Math.round(Number(pacote)) : null;
-      atualiza(v.id, { pacote: p });
+      atualiza(v.id, { pacote: pacoteDe(pacote) });
+      if (!estaConectado()) return;
+      clearTimeout(timers.current[v.id]);
+      timers.current[v.id] = setTimeout(() => {
+        const a = ref.current.find((x) => x.id === v.id);
+        if (!a) return;
+        agir(a, 'ajustar', { pacote: a.pacote ?? null }, () => {}, (p) => ({ seq: p.seq }), true);
+      }, 700);
     },
-    excluir: (id) => setItens((vs) => vs.filter((v) => v.id !== id)),
-    pausar: (v) => atualiza(v.id, { status: 'pausado', acumulado: decorrido(v, Date.now()), inicio: 0 }),
-    retomar: (v) => atualiza(v.id, { status: 'rodando', inicio: Date.now() }),
+    excluir: (id) => {
+      const v = ref.current.find((x) => x.id === id);
+      if (!v) return undefined;
+      return agir(v, 'liberar', { excluido: true }, () => remover(id), () => { remover(id); return {}; }, true);
+    },
+    pausar: (v) =>
+      agir(v, 'pausar', {}, () => atualiza(v.id, { status: 'pausado', acumulado: decorrido(v, Date.now()), inicio: 0 })),
+    retomar: (v) => agir(v, 'retomar', {}, () => atualiza(v.id, { status: 'rodando', inicio: Date.now() })),
     finalizar: encerrar,
     finalizarOutro: encerrar,
     // depois do pagamento a pessoa sai da lista
-    liberar: (ids) => setItens((vs) => vs.filter((v) => !ids.includes(v.id))),
+    liberar: async (ids, hist) => {
+      const h = hist && JSON.stringify(hist).length < 3500 ? hist : null;
+      for (let n = 0; n < ids.length; n++) {
+        const v = ref.current.find((x) => x.id === ids[n]);
+        if (!v) continue;
+        await agir(v, 'liberar', n === 0 && h ? { hist: h } : {}, () => remover(v.id), () => { remover(v.id); return {}; }, true);
+      }
+    },
+    reconciliar: (srv) =>
+      setItens((vs) => {
+        let mudou = false;
+        const sp = srv.filter((i) => i.item_id.startsWith('p:'));
+        const novo = [];
+        for (const v of vs) {
+          const i = sp.find((x) => x.item_id === `p:${v.id}`);
+          if (!i || pendente(i.item_id) || (v.seq || 0) === i.seq) { novo.push(v); continue; }
+          mudou = true;
+          if (i.status !== 'parado') novo.push(deServidor(v, i));
+        }
+        for (const i of sp) {
+          if (i.status === 'parado' || pendente(i.item_id)) continue;
+          const id = i.item_id.slice(2);
+          if (vs.some((v) => v.id === id)) continue;
+          mudou = true;
+          novo.push(deServidor({ id, numero: i.dados?.numero || 'Pessoa', tipo: 'Pula-pula', modo: 'pula' }, i));
+        }
+        return mudou ? novo : vs;
+      }),
     zerar: () => setItens([]),
   };
 }

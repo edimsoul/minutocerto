@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, ActivityIndicator, AppState, Alert } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -13,6 +13,7 @@ import { useVoltarAndroid } from './src/hooks';
 import { useAtualizacao, AvisoBaixando } from './src/atualizacao';
 import { useSincronizacao, registrarAcesso } from './src/sincronizacao';
 import { backupSeNecessario } from './src/backup';
+import { useGrupo, sairDoGrupo, estadoGrupo, sincronizarAgora } from './src/grupo';
 
 import { useBrinquedos } from './src/brinquedos/useBrinquedos';
 import Brinquedos from './src/brinquedos/Brinquedos';
@@ -28,32 +29,34 @@ import MercadoPago from './src/telas/MercadoPago';
 import Acesso from './src/telas/Acesso';
 import Feedback from './src/telas/Feedback';
 import BackupTela from './src/telas/Backuptela';
+import ConectarAparelho from './src/telas/ConectarAparelho';
+import RestaurarBackup from './src/componentes/RestaurarBackup';
 
 const TITULOS = {
   cadastro: 'Cadastro de brinquedos', relatorio: 'Relatório', valor: 'Valor do minuto',
-  mp: 'Mercado Pago', acesso: 'Usuário e senha', backup: 'Backup na nuvem', feedback: 'Feedback',
+  mp: 'Mercado Pago', acesso: 'Usuário e senha', backup: 'Backup na nuvem',
+  conectar: 'Conectar aparelho', feedback: 'Feedback',
 };
 
 function Principal() {
   const [tela, setTela] = useState('inicio');
   const [menu, setMenu] = useState(false);
   const [logado, setLogado] = useState(false);
+  const [restaurando, setRestaurando] = useState(false);
 
   const [config, setConfig, configPronta] = useConfig();
   const historico = useHistorico();
   const brinq = useBrinquedos();
   const pula = usePulaPula();
-  const baixando = useAtualizacao(!logado); // só pergunta no carregamento/login
+  const baixando = useAtualizacao(!logado);
 
-  const modo = config.modo || 'veiculos'; // 'veiculos' = brinquedos | 'pula'
+  const modo = config.modo || 'veiculos';
 
   useVoltarAndroid({
     logado, menu, tela,
     fecharMenu: () => setMenu(false),
     irInicio: () => setTela('inicio'),
   });
-
-  // a senha não vai para a nuvem (ajuste o nome do campo se for outro)
 
   useSincronizacao(
     { config, historico: historico.lista, brinquedos: brinq.itens, pula },
@@ -63,10 +66,50 @@ function Principal() {
 
   useEffect(() => { registrarAcesso('abriu_app', null, VERSAO); }, []);
 
-  // backup automático na nuvem (no máximo 1 por dia; só se o e-mail já foi confirmado)
-  useEffect(() => { if (logado) backupSeNecessario(); }, [logado]);
+  useEffect(() => {
+    if (!logado) return undefined;
+    backupSeNecessario();
+    const sub = AppState.addEventListener('change', (estado) => {
+      if (estado === 'active') backupSeNecessario();
+    });
+    return () => sub.remove();
+  }, [logado]);
 
-  // recuperação de senha: apaga tudo deste celular (como reinstalar o app)
+  // aparelhos conectados: aplica o que veio do servidor
+  useGrupo(logado && configPronta, ({ desconectado, itens, eventos }) => {
+    if (desconectado) {
+      Alert.alert('Desconectado', 'Este aparelho não está mais conectado ao outro.');
+      return;
+    }
+    brinq.reconciliar(itens);
+    pula.reconciliar(itens);
+    (eventos || []).forEach((ev) => {
+      if (!ev.meu && ev.tipo === 'liberar' && ev.dados?.hist) historico.registrar(ev.dados.hist);
+    });
+  });
+
+  // ao conectar com um código: traz brinquedos e preços do aparelho principal
+  const importarDoPrincipal = async () => {
+    const r = await estadoGrupo(true);
+    const d = r.dados;
+    if (d) {
+      if (Array.isArray(d.brinquedos)) brinq.importar(d.brinquedos);
+      setConfig({
+        ...config,
+        precoMinuto: d.config?.precoMinuto ?? config.precoMinuto,
+        precoPula: d.config?.precoPula ?? config.precoPula,
+      });
+    }
+    sincronizarAgora();
+  };
+
+  const sair = async () => {
+    const r = await sairDoGrupo();
+    if (!r.ok) return Alert.alert('Sem conexão', r.erro);
+    registrarAcesso('logout', config.usuario, VERSAO);
+    setMenu(false); setTela('inicio'); setLogado(false);
+  };
+
   const resetarTudo = async () => {
     registrarAcesso('reset_senha', null, VERSAO);
     await apagarTudo();
@@ -84,6 +127,18 @@ function Principal() {
           config={config} setConfig={setConfig}
           onEntrar={() => { registrarAcesso('login', config.usuario, VERSAO); setLogado(true); }}
           onResetar={resetarTudo}
+        />
+        <View style={{ paddingVertical: 12, alignItems: 'center', backgroundColor: cor.fundo }}>
+          <TouchableOpacity onPress={() => setRestaurando(true)}>
+            <Text style={{ color: cor.azul, fontWeight: '700', fontSize: 15 }}>Restaurar backup da nuvem</Text>
+          </TouchableOpacity>
+        </View>
+        <RestaurarBackup
+          visible={restaurando}
+          onClose={() => setRestaurando(false)}
+          config={config}
+          setConfig={setConfig}
+          onConcluido={() => { registrarAcesso('login', null, VERSAO); setLogado(true); }}
         />
         {aviso}
       </>
@@ -124,6 +179,7 @@ function Principal() {
         {tela === 'mp' && <MercadoPago config={config} setConfig={setConfig} />}
         {tela === 'acesso' && <Acesso config={config} setConfig={setConfig} />}
         {tela === 'backup' && <BackupTela />}
+        {tela === 'conectar' && <ConectarAparelho aoEntrar={importarDoPrincipal} />}
         {tela === 'feedback' && <Feedback />}
       </View>
 
@@ -141,14 +197,12 @@ function Principal() {
           if (tela === 'cadastro' && m !== 'veiculos') setTela('inicio');
         }}
         onIr={(t) => { setMenu(false); setTela(t); }}
-        onSair={() => { registrarAcesso('logout', config.usuario, VERSAO); setMenu(false); setTela('inicio'); setLogado(false); }}
+        onSair={sair}
       />
     </View>
   );
 }
 
-// Margem de segurança para TODAS as telas (carregando, login e app logado):
-// desce abaixo da câmera/barra de status e sobe acima dos botões do Android.
 function Moldura({ children }) {
   const i = useSafeAreaInsets();
   return (

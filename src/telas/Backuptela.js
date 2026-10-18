@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert, ScrollView, StyleSheet, AppState } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert, ScrollView, StyleSheet, AppState, BackHandler } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { temToken, lerStatus, fazerBackup, apagarBackupNuvem, ativarBackupLivre } from '../backup';
+import { temToken, lerStatus, fazerBackup, apagarBackupNuvem, ativarBackupLivre, baixarUltimo, restaurar } from '../backup';
+import { CHAVES, lerJSON } from '../armazenamento';
 import { s } from '../estilos';
 import { cor } from '../tema';
 
@@ -54,6 +55,52 @@ export default function BackupTela() {
     await recarregar();
     if (!r.ok) return setMsg(r.erro || 'Não foi possível enviar o backup.');
     setMsg(r.pulou === 'vazio' ? 'Ainda não há dados para guardar.' : 'Backup enviado com sucesso.');
+  };
+
+  // baixa o backup mais recente e, se a pessoa confirmar, grava no celular
+  const restaurarDaNuvem = async () => {
+    if (carreg) return;
+    setCarreg(true); setMsg('');
+    const b = await baixarUltimo();
+    setCarreg(false);
+    if (!b.ok) {
+      await recarregar();
+      return setMsg(b.erro || 'Não foi possível baixar o backup.');
+    }
+    const d = b.dados;
+    const resumo =
+      `Backup de ${dataBR(b.criadoEm)}:\n` +
+      `${d.brinquedos.length} brinquedos, ${(d.pula || []).length} pula-pula e ${d.historico.length} registros no histórico.\n\n` +
+      'Os dados atuais deste celular serão substituídos. Seu usuário e senha não mudam.';
+    Alert.alert('Restaurar da nuvem', resumo, [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Restaurar',
+        style: 'destructive',
+        onPress: async () => {
+          setCarreg(true); setMsg('');
+          try {
+            // mantém usuário/senha deste aparelho (o backup nunca leva a senha)
+            const atual = await lerJSON(CHAVES.config, {});
+            const config = { ...(d.config || {}) };
+            ['usuario', 'senhaHash', 'salt'].forEach((k) => {
+              if (atual[k] !== undefined) config[k] = atual[k];
+            });
+            await restaurar({ ...d, config });
+            setCarreg(false);
+            Alert.alert(
+              'Restaurado',
+              'Dados restaurados. Feche e abra o app de novo para carregá-los.',
+              [{ text: 'Fechar o app', onPress: () => BackHandler.exitApp() }],
+              { cancelable: false }
+            );
+          } catch (err) {
+            setCarreg(false);
+            setMsg('Não foi possível restaurar. Nada foi alterado; tente de novo.');
+          }
+        },
+      },
+    ]);
   };
 
   const excluir = () => {
@@ -113,9 +160,12 @@ export default function BackupTela() {
           </>
         ) : (
           <>
-            <Text style={e.txt}>O app envia um backup sozinho uma vez por dia. Aqui você pode enviar agora.</Text>
+            <Text style={e.txt}>O app envia um backup sozinho uma vez por dia. Aqui você pode enviar agora ou restaurar o último backup da nuvem.</Text>
             <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.verde }, carreg && { opacity: 0.6 }]} onPress={fazerAgora} disabled={carreg}>
               {carreg ? <ActivityIndicator color={cor.branco} /> : <Text style={s.botaoGrandeTxt}>Fazer backup agora</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.azul, marginTop: 10 }, carreg && { opacity: 0.6 }]} onPress={restaurarDaNuvem} disabled={carreg}>
+              <Text style={s.botaoGrandeTxt}>Restaurar da nuvem</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.vermelho, marginTop: 10 }, carreg && { opacity: 0.6 }]} onPress={excluir} disabled={carreg}>
               <Text style={s.botaoGrandeTxt}>Excluir backup da nuvem</Text>

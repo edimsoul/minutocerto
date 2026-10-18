@@ -1,4 +1,3 @@
-// Aluguel de brinquedos: ler o QR Code do brinquedo -> escolher tempo -> iniciar / pausar / encerrar -> cobrar.
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Modal, Alert, Vibration, StyleSheet } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -15,12 +14,10 @@ import { rotuloBrinquedo, iconeDe, hexDaCor, ordenar } from './brinquedo';
 const STATUS = { livre: 'Livre', rodando: 'Em uso', pausado: 'Pausado', finalizado: 'Aguardando pagamento' };
 const COR_STATUS = { livre: cor.suave, rodando: cor.verde, pausado: cor.ambar, finalizado: cor.vermelho };
 
-// tempos pré-definidos (minutos). O "Tempo livre" é um botão largo logo abaixo deles.
 const LINHA_1 = [10, 15, 20];
 const LINHA_2 = [25, 30];
 
-// Espaço no fim das janelas para os botões (Cancelar etc.) ficarem acima da barra do Android.
-// Quer subir mais? Aumente o 120. Cada 10 sobe uns 10 pixels.
+// Espaço no fim das janelas para os botões ficarem acima da barra do Android.
 const PAD_JANELA = { padding: 20, paddingBottom: 120 };
 
 function AcoesBrinquedo({ v, brinq, aoIniciar, aoEncerrar, aoCobrar, depois }) {
@@ -100,18 +97,15 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
   const [fichaId, setFichaId] = useState(null);
   const [cobrancaId, setCobrancaId] = useState(null);
 
-  // tempo definido: escolha ao iniciar e limite (em minutos) de cada brinquedo em andamento
-  const [escolhaId, setEscolhaId] = useState(null);       // brinquedo que está escolhendo o tempo
-  const [tempoSel, setTempoSel] = useState(undefined);    // undefined = nada escolhido, 0 = tempo livre, N = minutos
-  const [limites, setLimites] = useState({});             // { [id]: minutos }
-  const avisados = useRef(new Set());                     // brinquedos que já tocaram o alerta de fim de tempo
+  const [escolhaId, setEscolhaId] = useState(null);
+  const [tempoSel, setTempoSel] = useState(undefined);
+  const avisados = useRef(new Set());
 
-  // encerrar: câmera (prioridade) ou digitar o número
-  const [lendoEnc, setLendoEnc] = useState(false);   // câmera do "Encerrar"
-  const [digEnc, setDigEnc] = useState(false);       // digitar o número para encerrar
+  const [lendoEnc, setLendoEnc] = useState(false);
+  const [digEnc, setDigEnc] = useState(false);
   const [numeroEnc, setNumeroEnc] = useState('');
-  const [lote, setLote] = useState([]);              // ids dos brinquedos a encerrar juntos
-  const leuQRRef = useRef(false);                    // evita abrir o "digitar" quando a câmera fecha após uma leitura
+  const [lote, setLote] = useState([]);
+  const leuQRRef = useRef(false);
 
   const { itens } = brinq;
   const preco = config.precoMinuto;
@@ -124,17 +118,15 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
   const noLote = lote.map((id) => itens.find((v) => v.id === id)).filter(Boolean);
   const totalLote = noLote.reduce((t, v) => t + calcValor(decorrido(v, agora), preco), 0);
 
-  // brinquedos em uso que batem com o número digitado (e ainda não estão na lista)
   const achadosEnc = numeroEnc.trim()
     ? brinq.buscarPorNumero(numeroEnc).filter(
         (v) => (v.status === 'rodando' || v.status === 'pausado') && !lote.includes(v.id)
       )
     : [];
 
-  // avisa (vibra + alerta) quando o tempo definido acaba
   useEffect(() => {
     itens.forEach((v) => {
-      const lim = limites[v.id];
+      const lim = v.limite;
       if (!lim || v.status !== 'rodando' || avisados.current.has(v.id)) return;
       if (decorrido(v, agora) >= lim * 60000) {
         avisados.current.add(v.id);
@@ -144,16 +136,8 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
     });
   }, [agora]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const limparLimites = (ids) => {
-    setLimites((l) => {
-      const n = { ...l };
-      ids.forEach((id) => delete n[id]);
-      return n;
-    });
-    ids.forEach((id) => avisados.current.delete(id));
-  };
+  const limparLimites = (ids) => ids.forEach((id) => avisados.current.delete(id));
 
-  // botão Iniciar aluguel: primeiro escolhe o tempo
   const aoIniciar = (v) => { setTempoSel(undefined); setEscolhaId(v.id); };
   const fecharEscolha = () => { setEscolhaId(null); setTempoSel(undefined); };
 
@@ -162,15 +146,9 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
     setEscolhaId(null);
     if (!v) return;
     avisados.current.delete(v.id);
-    setLimites((l) => {
-      const n = { ...l };
-      if (minutos) n[v.id] = minutos; else delete n[v.id];
-      return n;
-    });
-    brinq.iniciar(v);
+    brinq.iniciar(v, minutos);
   };
 
-  // botão azul "Iniciar": 0 (tempo livre) vira null = sem contagem regressiva
   const confirmarTempo = () => {
     if (tempoSel === undefined) return;
     iniciarComTempo(tempoSel || null);
@@ -221,7 +199,6 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
     adicionarAoLote(v);
   };
 
-  // fechar a câmera sem ler: se ainda não há nada na lista, oferece digitar o número
   const aoFecharCameraEnc = () => {
     setLendoEnc(false);
     if (leuQRRef.current) { leuQRRef.current = false; return; }
@@ -236,16 +213,15 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
     adicionarAoLote(v);
   };
 
-  const encerrarLote = () => {
-    const lista = noLote;
-    lista.forEach((v) => brinq.finalizar(v));
-    setCobrancaId(lista[0]?.id ?? null);
+  const encerrarLote = async () => {
+    const feitos = [];
+    for (const v of noLote) if (await brinq.finalizar(v)) feitos.push(v);
     setLote([]);
+    if (feitos.length) setCobrancaId(feitos[0].id);
   };
 
   const aoCobrar = (v) => setCobrancaId(v.id);
 
-  // um quadrado de tempo (10, 15, 20...)
   const quadradoTempo = (min, i) => (
     <TouchableOpacity
       key={min}
@@ -288,7 +264,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
 
         {ativos.map((v) => (
           <CartaoBrinquedo
-            key={v.id} v={v} agora={agora} preco={preco} brinq={brinq} limiteMin={limites[v.id]}
+            key={v.id} v={v} agora={agora} preco={preco} brinq={brinq} limiteMin={v.limite}
             aoIniciar={aoIniciar} aoEncerrar={aoEncerrar} aoCobrar={aoCobrar}
           />
         ))}
@@ -299,13 +275,11 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
         onLido={aoLerQR} onFechar={() => setLendo(false)}
       />
 
-      {/* câmera do botão Encerrar (fechar a câmera abre o "digitar o número") */}
       <LeitorQR
         visivel={lendoEnc} titulo="Aponte para o QR Code do brinquedo a encerrar"
         onLido={aoLerQREncerrar} onFechar={aoFecharCameraEnc}
       />
 
-      {/* escolha do tempo ao iniciar o aluguel */}
       <Modal transparent animationType="slide" visible={!!escolhendo} onRequestClose={fecharEscolha}>
         <View style={s.fundoModal}>
           <View style={[s.modal, { maxHeight: '94%' }]}>
@@ -320,7 +294,6 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
               <View style={e.linhaTempos}>{LINHA_1.map(quadradoTempo)}</View>
               <View style={e.linhaTempos}>{LINHA_2.map(quadradoTempo)}</View>
 
-              {/* tempo livre: botão largo */}
               <TouchableOpacity
                 activeOpacity={0.8}
                 style={[e.livre, tempoSel === 0 && e.livreSel]}
@@ -354,7 +327,6 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
         </View>
       </Modal>
 
-      {/* alternativa ao QR Code para encerrar: digitar o número */}
       <Modal transparent animationType="slide" visible={digEnc} onRequestClose={fecharDigitarEnc}>
         <View style={s.fundoModal}>
           <ScrollView style={s.modal} contentContainerStyle={PAD_JANELA} keyboardShouldPersistTaps="handled">
@@ -387,7 +359,6 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
         </View>
       </Modal>
 
-      {/* confirmação do encerramento: tempo corrido + juntar com outro */}
       <Modal
         transparent animationType="slide"
         visible={noLote.length > 0 && !lendoEnc && !digEnc}
@@ -407,7 +378,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
                     <View style={{ flex: 1, marginLeft: 12 }}>
                       <Text style={s.tipo}>{rotuloBrinquedo(v)}{v.cor ? ` · ${v.cor}` : ''}</Text>
                       <Text style={s.sub2}>
-                        Tempo corrido: {fmtTempo(ms)}{limites[v.id] ? ` (definido: ${limites[v.id]} min)` : ' (tempo livre)'}
+                        Tempo corrido: {fmtTempo(ms)}{v.limite ? ` (definido: ${v.limite} min)` : ' (tempo livre)'}
                       </Text>
                     </View>
                     <Text style={s.valorAoVivo}>{brl(calcValor(ms, preco))}</Text>
@@ -430,7 +401,6 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
         </View>
       </Modal>
 
-      {/* ficha do brinquedo lido: iniciar, pausar, encerrar... */}
       <Modal transparent animationType="slide" visible={!!ficha} onRequestClose={() => setFichaId(null)}>
         <View style={s.fundoModal}>
           <View style={[s.modal, { maxHeight: '94%' }]}>
@@ -438,7 +408,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
               <Text style={[s.modalTitulo, { marginBottom: 12 }]}>Brinquedo encontrado</Text>
               {ficha && (
                 <CartaoBrinquedo
-                  v={ficha} agora={agora} preco={preco} brinq={brinq} limiteMin={limites[ficha.id]}
+                  v={ficha} agora={agora} preco={preco} brinq={brinq} limiteMin={ficha.limite}
                   aoIniciar={aoIniciar} aoEncerrar={aoEncerrar} aoCobrar={aoCobrar}
                   depois={() => setFichaId(null)}
                 />
@@ -449,7 +419,6 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
         </View>
       </Modal>
 
-      {/* alternativa ao QR Code: digitar o número (novo aluguel) */}
       <Modal transparent animationType="slide" visible={digitando} onRequestClose={fecharDigitar}>
         <View style={s.fundoModal}>
           <ScrollView style={s.modal} contentContainerStyle={PAD_JANELA} keyboardShouldPersistTaps="handled">
@@ -482,8 +451,9 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
           onFinalizarOutro={brinq.finalizarOutro}
           onFechar={() => setCobrancaId(null)}
           onPago={(metodo, lista, extra) => {
-            onPagamento(montarHistorico(lista, metodo, extra, { rotuloDe: rotuloBrinquedo, preco, modo: 'veiculos' }));
-            brinq.liberar(lista.map((v) => v.id));
+            const h = montarHistorico(lista, metodo, extra, { rotuloDe: rotuloBrinquedo, preco, modo: 'veiculos' });
+            onPagamento(h);
+            brinq.liberar(lista.map((v) => v.id), h);
             limparLimites(lista.map((v) => v.id));
             setCobrancaId(null);
           }}
@@ -509,7 +479,6 @@ const e = StyleSheet.create({
   },
   restante: { fontSize: 13, fontWeight: '700', marginTop: 2 },
 
-  // quadrados de tempo
   linhaTempos: { flexDirection: 'row', marginBottom: 10 },
   tempo: {
     flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 104, paddingVertical: 12,
@@ -521,7 +490,6 @@ const e = StyleSheet.create({
   tempoUn: { fontSize: 12, color: cor.suave, marginTop: -2 },
   tempoValor: { fontSize: 13, fontWeight: '700', color: cor.verde, marginTop: 4 },
 
-  // botão largo "Tempo livre"
   livre: {
     flexDirection: 'row', alignItems: 'center', minHeight: 72, paddingHorizontal: 14, paddingVertical: 10,
     borderRadius: 14, backgroundColor: cor.fundo, borderWidth: 2, borderColor: cor.linha, marginBottom: 14,
@@ -534,7 +502,6 @@ const e = StyleSheet.create({
   livreTitulo: { fontSize: 18, fontWeight: '800', color: cor.tinta },
   livreSub: { fontSize: 12, color: cor.suave, marginTop: 2 },
 
-  // botão azul "Iniciar"
   botaoSeguir: {
     backgroundColor: cor.azul, borderRadius: 12, minHeight: 54,
     alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16,

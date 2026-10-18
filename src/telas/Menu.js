@@ -11,8 +11,6 @@ const PERFIS = [
   ['pula', 'Pula-pula', 'human-handsup'],
 ];
 
-// Menu em tela cheia, com um card (e ícone) para cada opção.
-// O Modal é outra janela: por isso tem o próprio SafeAreaProvider (margens da câmera e dos botões do Android).
 export default function Menu(props) {
   return (
     <Modal animationType="slide" visible={props.visivel} statusBarTranslucent onRequestClose={props.onFechar}>
@@ -36,57 +34,58 @@ function Corpo({ modo, onFechar, onModo, onIr, onSair }) {
     { k: 'mp', n: 'Mercado Pago', d: 'Pix e token', icone: 'qrcode', c: cor.azul },
     { k: 'acesso', n: 'Usuário e senha', d: 'Seu acesso', icone: 'account-lock', c: cor.tinta },
     { k: 'backup', n: 'Backup', d: 'Salvar na nuvem', icone: 'cloud-upload-outline', c: cor.azul },
+    { k: 'conectar', n: 'Conectar aparelho', d: 'Sincronizar por código', icone: 'cellphone-link', c: cor.verde },
     { k: 'feedback', n: 'Feedback', d: 'Avalie pelo WhatsApp', icone: 'message-star-outline', c: '#1FA855' },
   ];
 
   return (
-      <View style={[e.tela, { paddingTop: topo, paddingBottom: insets.bottom }]}>
-        <RNStatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
-        <View style={e.topo}>
-          <Image source={LOGO} style={e.logo} resizeMode="contain" />
-          <Text style={e.titulo}>Menu</Text>
-          <TouchableOpacity style={e.fechar} onPress={onFechar}>
-            <MaterialCommunityIcons name="close" size={24} color={cor.tinta} />
-          </TouchableOpacity>
+    <View style={[e.tela, { paddingTop: topo, paddingBottom: insets.bottom }]}>
+      <RNStatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
+      <View style={e.topo}>
+        <Image source={LOGO} style={e.logo} resizeMode="contain" />
+        <Text style={e.titulo}>Menu</Text>
+        <TouchableOpacity style={e.fechar} onPress={onFechar}>
+          <MaterialCommunityIcons name="close" size={24} color={cor.tinta} />
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 4, paddingBottom: 30 }}>
+        <Text style={e.secao}>Tipo de aluguel</Text>
+        <View style={e.grade}>
+          {PERFIS.map(([k, n, ic]) => {
+            const on = modo === k;
+            return (
+              <TouchableOpacity key={k} style={[e.perfil, on && e.perfilOn]} onPress={() => onModo(k)}>
+                <MaterialCommunityIcons name={ic} size={34} color={on ? cor.branco : cor.tinta} />
+                <Text style={[e.perfilTxt, on && { color: cor.branco }]}>{n}</Text>
+                {on && <Text style={e.perfilAtivo}>Ativo</Text>}
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
-        <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 4, paddingBottom: 30 }}>
-          <Text style={e.secao}>Tipo de aluguel</Text>
-          <View style={e.grade}>
-            {PERFIS.map(([k, n, ic]) => {
-              const on = modo === k;
-              return (
-                <TouchableOpacity key={k} style={[e.perfil, on && e.perfilOn]} onPress={() => onModo(k)}>
-                  <MaterialCommunityIcons name={ic} size={34} color={on ? cor.branco : cor.tinta} />
-                  <Text style={[e.perfilTxt, on && { color: cor.branco }]}>{n}</Text>
-                  {on && <Text style={e.perfilAtivo}>Ativo</Text>}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          <Text style={[e.secao, { marginTop: 18 }]}>Opções</Text>
-          <View style={e.grade}>
-            {itens.map((it) => (
-              <TouchableOpacity key={it.k} style={e.cartao} onPress={() => onIr(it.k)}>
-                <View style={[e.cartaoIcone, { backgroundColor: it.c + '22' }]}>
-                  <MaterialCommunityIcons name={it.icone} size={30} color={it.c} />
-                </View>
-                <Text style={e.cartaoTitulo}>{it.n}</Text>
-                <Text style={e.cartaoDesc}>{it.d}</Text>
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity style={[e.cartao, { borderColor: cor.vermelho }]} onPress={onSair}>
-              <View style={[e.cartaoIcone, { backgroundColor: cor.vermelho + '22' }]}>
-                <MaterialCommunityIcons name="logout" size={30} color={cor.vermelho} />
+        <Text style={[e.secao, { marginTop: 18 }]}>Opções</Text>
+        <View style={e.grade}>
+          {itens.map((it) => (
+            <TouchableOpacity key={it.k} style={e.cartao} onPress={() => onIr(it.k)}>
+              <View style={[e.cartaoIcone, { backgroundColor: it.c + '22' }]}>
+                <MaterialCommunityIcons name={it.icone} size={30} color={it.c} />
               </View>
-              <Text style={[e.cartaoTitulo, { color: cor.vermelho }]}>Sair</Text>
-              <Text style={e.cartaoDesc}>Bloquear o app</Text>
+              <Text style={e.cartaoTitulo}>{it.n}</Text>
+              <Text style={e.cartaoDesc}>{it.d}</Text>
             </TouchableOpacity>
-          </View>
-          <Text style={e.versao}>Versão {VERSAO}</Text>
-        </ScrollView>
-      </View>
+          ))}
+          <TouchableOpacity style={[e.cartao, { borderColor: cor.vermelho }]} onPress={onSair}>
+            <View style={[e.cartaoIcone, { backgroundColor: cor.vermelho + '22' }]}>
+              <MaterialCommunityIcons name="logout" size={30} color={cor.vermelho} />
+            </View>
+            <Text style={[e.cartaoTitulo, { color: cor.vermelho }]}>Sair</Text>
+            <Text style={e.cartaoDesc}>Bloquear o app</Text>
+          </TouchableOpacity>
+        </View>
+        <Text style={e.versao}>Versão {VERSAO}</Text>
+      </ScrollView>
+    </View>
   );
 }
 

@@ -1,10 +1,15 @@
+import { useRef } from 'react';
 import { usePersistente } from '../hooks';
 import { CHAVES } from '../armazenamento';
 import { decorrido } from '../util';
+import { executar, patchDoServidor, pendente } from '../grupo';
 
-// Dados e ações do aluguel de brinquedos (guardados à parte do pula-pula).
+const LIVRE = { status: 'livre', inicio: 0, acumulado: 0, limite: null };
+
 export function useBrinquedos() {
   const [itens, setItens, pronto] = usePersistente(CHAVES.brinquedos, []);
+  const ref = useRef(itens);
+  ref.current = itens;
 
   const atualiza = (id, m) => setItens((vs) => vs.map((v) => (v.id === id ? { ...v, ...m } : v)));
   const norm = (x) => String(x == null ? '' : x).trim();
@@ -13,7 +18,6 @@ export function useBrinquedos() {
   const buscarPorNumero = (numero) =>
     itens.filter((v) => norm(v.numero).toLowerCase() === norm(numero).toLowerCase());
 
-  // d = { categoria, tipo, cor, numero, codigo? }  ->  { ok, id } ou { erro }
   const cadastrar = (d) => {
     const numero = norm(d.numero);
     if (!numero) return { erro: 'Digite o número do brinquedo.' };
@@ -34,18 +38,63 @@ export function useBrinquedos() {
     return { ok: true, id };
   };
 
+  const agir = (v, tipo, dados, local, pos, suave) =>
+    executar({
+      item: `b:${v.id}`, tipo, dados, local, suave,
+      base: (ref.current.find((x) => x.id === v.id) || v).seq,
+      aplicar: (p) => atualiza(v.id, pos ? pos(p) : p),
+    });
+
+  const parar = (v, tipo) =>
+    agir(v, tipo, {}, () => atualiza(v.id, { status: 'finalizado', acumulado: decorrido(v, Date.now()), inicio: 0 }));
+
   return {
     itens, pronto,
     buscarPorCodigo, buscarPorNumero, cadastrar,
     remover: (id) => setItens((vs) => vs.filter((v) => v.id !== id)),
-    iniciar: (v) => atualiza(v.id, { status: 'rodando', inicio: Date.now(), acumulado: 0 }),
-    pausar: (v) => atualiza(v.id, { status: 'pausado', acumulado: decorrido(v, Date.now()), inicio: 0 }),
-    retomar: (v) => atualiza(v.id, { status: 'rodando', inicio: Date.now() }),
-    finalizar: (v) => atualiza(v.id, { status: 'finalizado', acumulado: decorrido(v, Date.now()), inicio: 0 }),
-    finalizarOutro: (v) => atualiza(v.id, { status: 'finalizado', acumulado: decorrido(v, Date.now()), inicio: 0 }),
-    // depois do pagamento o brinquedo volta a ficar livre
-    liberar: (ids) =>
-      setItens((vs) => vs.map((v) => (ids.includes(v.id) ? { ...v, status: 'livre', inicio: 0, acumulado: 0 } : v))),
+    iniciar: (v, minutos = null) => {
+      const limite = minutos || null;
+      return agir(
+        v, 'iniciar', { limite },
+        () => atualiza(v.id, { status: 'rodando', inicio: Date.now(), acumulado: 0, limite }),
+        (p) => ({ ...p, limite }),
+      );
+    },
+    pausar: (v) =>
+      agir(v, 'pausar', {}, () => atualiza(v.id, { status: 'pausado', acumulado: decorrido(v, Date.now()), inicio: 0 })),
+    retomar: (v) => agir(v, 'retomar', {}, () => atualiza(v.id, { status: 'rodando', inicio: Date.now() })),
+    finalizar: (v) => parar(v, 'encerrar'),
+    finalizarOutro: (v) => parar(v, 'encerrar'),
+    // depois do pagamento o brinquedo volta a ficar livre; "hist" vai para o relatório do outro aparelho
+    liberar: async (ids, hist) => {
+      const h = hist && JSON.stringify(hist).length < 3500 ? hist : null;
+      for (let n = 0; n < ids.length; n++) {
+        const v = ref.current.find((x) => x.id === ids[n]);
+        if (!v) continue;
+        await agir(v, 'liberar', n === 0 && h ? { hist: h } : {}, () => atualiza(v.id, LIVRE), (p) => ({ ...p, limite: null }), true);
+      }
+    },
+    // traz os brinquedos cadastrados no aparelho principal (seq zerado: o servidor corrige no próximo ciclo)
+    importar: (lista) =>
+      setItens((vs) => {
+        const ids = new Set(vs.map((v) => v.id));
+        const novos = (lista || [])
+          .filter((b) => b && b.id && !ids.has(b.id))
+          .map((b) => ({ ...b, ...LIVRE, seq: 0 }));
+        return novos.length ? [...vs, ...novos] : vs;
+      }),
+    // aplica o estado vindo do servidor (outros aparelhos)
+    reconciliar: (srv) =>
+      setItens((vs) => {
+        let mudou = false;
+        const novo = vs.map((v) => {
+          const i = srv.find((x) => x.item_id === `b:${v.id}`);
+          if (!i || pendente(i.item_id) || (v.seq || 0) === i.seq) return v;
+          mudou = true;
+          return { ...v, ...patchDoServidor(i), limite: i.dados?.limite || null };
+        });
+        return mudou ? novo : vs;
+      }),
     zerar: () => setItens([]),
   };
 }

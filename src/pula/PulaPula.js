@@ -1,5 +1,3 @@
-// Pula-pula: anota o nome, escolhe o tempo (livre, 5, 10, 15 ou outro); pausar, encerrar e cobrar.
-// Avisa com vibração + banner quando o tempo do pacote acaba.
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Alert, Modal, Vibration, KeyboardAvoidingView, Platform } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -11,7 +9,6 @@ import { brl, calcValor, decorrido, fmtTempo } from '../util';
 import { useAgora } from '../hooks';
 import { montarHistorico } from '../historico';
 
-
 const STATUS = { rodando: 'Brincando', pausado: 'Pausado', finalizado: 'Aguardando pagamento' };
 const COR_STATUS = { rodando: cor.verde, pausado: cor.ambar, finalizado: cor.vermelho };
 const rotuloPessoa = (v) => v.numero;
@@ -19,23 +16,20 @@ const rotuloPessoa = (v) => v.numero;
 const PREDEFINIDOS = [5, 10, 15];
 const PADRAO_VIBRACAO = [0, 600, 300, 600, 300, 600];
 
-// Fundos suaves e harmoniosos, um para cada card (repetem em sequência)
 const FUNDOS = [
-  '#EAF3FC', // azul muito claro
-  '#E4F4EC', // verde menta
-  '#EFEAFB', // lilás
-  '#FDF1E4', // pêssego
-  '#E3F3F5', // azul água
-  '#FBEAF0', // rosa
-  '#F5F3DF', // areia
+  '#EAF3FC',
+  '#E4F4EC',
+  '#EFEAFB',
+  '#FDF1E4',
+  '#E3F3F5',
+  '#FBEAF0',
+  '#F5F3DF',
 ];
 const FUNDO_ESGOTADO = '#FDECEC';
 
-// Estilo dos campos de texto: texto preto, sempre legível
 const TEXTO_INPUT = { color: '#000' };
 const COR_PLACEHOLDER = '#6b7280';
 
-// Seletor de tempo: Livre | 5 | 10 | 15 | Outro (minutos digitados)
 function SeletorTempo({ valor, onChange }) {
   const ehOutro = valor != null && !PREDEFINIDOS.includes(valor);
   const [outro, setOutro] = useState(ehOutro);
@@ -95,17 +89,16 @@ function SeletorTempo({ valor, onChange }) {
 export default function PulaPula({ pula, config, onPagamento }) {
   const agora = useAgora();
   const [nome, setNome] = useState('');
-  const [pacote, setPacote] = useState(null); // null = livre (por minutos)
+  const [pacote, setPacote] = useState(null);
   const [cobrancaId, setCobrancaId] = useState(null);
   const [editandoId, setEditandoId] = useState(null);
-  const [avisos, setAvisos] = useState([]); // nomes de quem teve o tempo esgotado
-  const avisados = useRef(new Set()); // chaves "id-pacote" que já avisaram
+  const [avisos, setAvisos] = useState([]);
+  const avisados = useRef(new Set());
 
   const preco = config.precoPula;
   const cobrando = pula.itens.find((v) => v.id === cobrancaId);
   const editando = pula.itens.find((v) => v.id === editandoId);
 
-  // Confere a cada tick se alguém estourou o tempo do pacote
   useEffect(() => {
     const novos = [];
     pula.itens.forEach((v) => {
@@ -132,6 +125,8 @@ export default function PulaPula({ pula, config, onPagamento }) {
       { text: 'Cancelar' },
       { text: 'Excluir', style: 'destructive', onPress: () => pula.excluir(v.id) },
     ]);
+
+  const fim = async (v) => { if (await pula.finalizar(v)) setCobrancaId(v.id); };
 
   return (
     <>
@@ -228,11 +223,11 @@ export default function PulaPula({ pula, config, onPagamento }) {
               <View style={s.acoes}>
                 {v.status === 'rodando' && (<>
                   <Botao txt="Pausar" c={cor.ambar} onPress={() => pula.pausar(v)} />
-                  <Botao txt="Fim" c={cor.vermelho} onPress={() => { pula.finalizar(v); setCobrancaId(v.id); }} />
+                  <Botao txt="Fim" c={cor.vermelho} onPress={() => fim(v)} />
                 </>)}
                 {v.status === 'pausado' && (<>
                   <Botao txt="Continuar" c={cor.verde} onPress={() => pula.retomar(v)} />
-                  <Botao txt="Fim" c={cor.vermelho} onPress={() => { pula.finalizar(v); setCobrancaId(v.id); }} />
+                  <Botao txt="Fim" c={cor.vermelho} onPress={() => fim(v)} />
                 </>)}
                 {v.status !== 'finalizado' && (
                   <Botao txt="Tempo" c={cor.azul} onPress={() => setEditandoId(v.id)} />
@@ -249,47 +244,45 @@ export default function PulaPula({ pula, config, onPagamento }) {
         })}
       </ScrollView>
 
-      {/* Editar o tempo de quem já está pulando */}
-      {/* Editar o tempo de quem já está pulando */}
-<Modal visible={!!editando} transparent animationType="fade" onRequestClose={() => setEditandoId(null)}>
-  <KeyboardAvoidingView
-    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}>
-    <ScrollView
-      contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 20 }}
-      keyboardShouldPersistTaps="handled">
-      {editando && (
-        <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 18 }}>
-          <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 4, color: '#000' }}>
-            Tempo de {editando.numero}
-          </Text>
-          <Text style={{ color: cor.suave, marginBottom: 14 }}>
-            O relógio não zera: o novo tempo vale a partir do que já passou.
-          </Text>
-          <SeletorTempo
-            key={editando.id}
-            valor={editando.pacote || null}
-            onChange={(m) => pula.alterarPacote(editando, m)}
-          />
-          <TouchableOpacity
-            onPress={() => setEditandoId(null)}
-            activeOpacity={0.8}
-            style={{
-              marginTop: 20,
-              backgroundColor: cor.verde,
-              borderRadius: 12,
-              paddingVertical: 16,
-              alignItems: 'center',
-              alignSelf: 'stretch',
-              minHeight: 54,
-            }}>
-            <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800' }}>Pronto</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-    </ScrollView>
-  </KeyboardAvoidingView>
-</Modal>
+      <Modal visible={!!editando} transparent animationType="fade" onRequestClose={() => setEditandoId(null)}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <ScrollView
+            contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 20 }}
+            keyboardShouldPersistTaps="handled">
+            {editando && (
+              <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 18 }}>
+                <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 4, color: '#000' }}>
+                  Tempo de {editando.numero}
+                </Text>
+                <Text style={{ color: cor.suave, marginBottom: 14 }}>
+                  O relógio não zera: o novo tempo vale a partir do que já passou.
+                </Text>
+                <SeletorTempo
+                  key={editando.id}
+                  valor={editando.pacote || null}
+                  onChange={(m) => pula.alterarPacote(editando, m)}
+                />
+                <TouchableOpacity
+                  onPress={() => setEditandoId(null)}
+                  activeOpacity={0.8}
+                  style={{
+                    marginTop: 20,
+                    backgroundColor: cor.verde,
+                    borderRadius: 12,
+                    paddingVertical: 16,
+                    alignItems: 'center',
+                    alignSelf: 'stretch',
+                    minHeight: 54,
+                  }}>
+                  <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800' }}>Pronto</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
 
       {cobrando && (
         <Cobranca
@@ -298,8 +291,9 @@ export default function PulaPula({ pula, config, onPagamento }) {
           onFinalizarOutro={pula.finalizarOutro}
           onFechar={() => setCobrancaId(null)}
           onPago={(metodo, lista, extra) => {
-            onPagamento(montarHistorico(lista, metodo, extra, { rotuloDe: rotuloPessoa, preco, modo: 'pula' }));
-            pula.liberar(lista.map((v) => v.id));
+            const h = montarHistorico(lista, metodo, extra, { rotuloDe: rotuloPessoa, preco, modo: 'pula' });
+            onPagamento(h);
+            pula.liberar(lista.map((v) => v.id), h);
             setCobrancaId(null);
           }}
         />

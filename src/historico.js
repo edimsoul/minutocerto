@@ -2,7 +2,6 @@ import { usePersistente } from './hooks';
 import { CHAVES } from './armazenamento';
 import { calcValor, arred2 } from './util';
 
-// monta o lançamento do relatório a partir dos itens cobrados (vale para qualquer módulo)
 export function montarHistorico(lista, metodo, extra, { rotuloDe, preco, modo }) {
   const lancamentos = lista.map((v) => ({
     numero: v.numero, tipo: v.tipo, rotulo: rotuloDe(v),
@@ -26,7 +25,7 @@ export function useHistorico() {
   const [lista, setLista, pronto] = usePersistente(CHAVES.historico, []);
   return {
     lista, pronto,
-    registrar: (entrada) => setLista((h) => [entrada, ...h]),
+    registrar: (entrada) => setLista((h) => (h.some((x) => x.id === entrada.id) ? h : [entrada, ...h])),
     limpar: () => setLista([]),
   };
 }
