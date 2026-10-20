@@ -61,7 +61,7 @@ export default function Relatorio({ historico, onLimpar }) {
   const seg = lista.reduce((a, h) => a + h.segundos, 0);
   const periodo =
     { hoje: 'Hoje', semana: 'Últimos 7 dias', tudo: 'Todo o período' }[filtro] +
-    (cat !== 'todos' ? ' · ' + { veiculos: 'Brinquedos', pula: 'Pula-pula' }[cat] : '');
+    (cat !== 'todos' ? ' · ' + { veiculos: 'Brinquedos', pula: 'Pula-pula', avulso: 'Avulso' }[cat] : '');
 
   const exportarTexto = () => {
     const linhas = ['Data;Item;Tempo(s);Valor;Pagamento',
@@ -93,7 +93,7 @@ export default function Relatorio({ historico, onLimpar }) {
         ))}
       </View>
       <View style={s.linhaTipos}>
-        {[['todos', 'Todos'], ['veiculos', 'Brinquedos'], ['pula', 'Pula-pula']].map(([k, n]) => (
+        {[['todos', 'Todos'], ['veiculos', 'Brinquedos'], ['pula', 'Pula-pula'], ['avulso', 'Avulso']].map(([k, n]) => (
           <TouchableOpacity key={k} onPress={() => setCat(k)} style={[s.chip, cat === k && s.chipOn]}>
             <Text style={[s.chipTxt, cat === k && { color: cor.branco }]}>{n}</Text>
           </TouchableOpacity>
@@ -126,7 +126,7 @@ export default function Relatorio({ historico, onLimpar }) {
               </Text>
             )}
             <Text style={s.sub2}>
-              {fmtTempoTexto(h.segundos)} · {new Date(h.data).toLocaleString('pt-BR')} · {h.metodo}
+              {h.segundos > 0 ? `${fmtTempoTexto(h.segundos)} · ` : ''}{new Date(h.data).toLocaleString('pt-BR')} · {h.metodo}
               {h.metodo === 'Dinheiro' && h.troco > 0 ? ` · troco ${brl(h.troco)}` : ''}{h.motivo ? ` · ${h.motivo}` : ''}
             </Text>
           </View>

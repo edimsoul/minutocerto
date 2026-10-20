@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { CHAVES, lerJSON, salvarJSON, sec, lerCred, prontoMigracao } from './armazenamento';
 
 export const CONFIG_PADRAO = {
-  precoMinuto: 1, precoPula: 1, modo: 'veiculos', token: '', usuario: '', senhaHash: '', salt: '',
+  precoMinuto: 1, precoPula: 1, modo: 'veiculos', modoEscolhido: false, token: '', usuario: '', senhaHash: '', salt: '',
 };
 
 // configurações do app: preços, tipo de aluguel, usuário; token e senha vão para o cofre

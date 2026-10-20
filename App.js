@@ -26,6 +26,7 @@ import Menu from './src/telas/Menu';
 import Relatorio from './src/telas/Relatorio';
 import ValorMinuto from './src/telas/ValorMinuto';
 import MercadoPago from './src/telas/MercadoPago';
+import Cobranca from './src/telas/cobranca';
 import Acesso from './src/telas/Acesso';
 import Feedback from './src/telas/Feedback';
 import BackupTela from './src/telas/Backuptela';
@@ -33,8 +34,8 @@ import ConectarAparelho from './src/telas/ConectarAparelho';
 import RestaurarBackup from './src/componentes/RestaurarBackup';
 
 const TITULOS = {
-  cadastro: 'Cadastro de brinquedos', relatorio: 'Relatório', valor: 'Valor do minuto',
-  mp: 'Mercado Pago', acesso: 'Usuário e senha', backup: 'Backup na nuvem',
+  cadastro: 'Cadastro de brinquedos', relatorio: 'Relatório',
+  valor: 'Valor do minuto', mp: 'Mercado Pago', acesso: 'Usuário e senha', backup: 'Backup na nuvem',
   conectar: 'Conectar aparelho', feedback: 'Feedback',
 };
 
@@ -145,6 +146,10 @@ function Principal() {
     );
   }
 
+  const subtitulo = modo === 'cobranca'
+    ? 'Cobrança avulsa · descrição e valor na hora'
+    : `${modo === 'pula' ? 'Pula-pula' : 'Brinquedos'} · ${brl(modo === 'pula' ? config.precoPula : config.precoMinuto)} por minuto`;
+
   return (
     <View style={s.tela}>
       {aviso}
@@ -153,9 +158,7 @@ function Principal() {
         {tela === 'inicio' ? (
           <View style={{ flex: 1 }}>
             <Text style={s.titulo}>MinutoCerto</Text>
-            <Text style={s.sub}>
-              {modo === 'pula' ? 'Pula-pula' : 'Brinquedos'} · {brl(modo === 'pula' ? config.precoPula : config.precoMinuto)} por minuto
-            </Text>
+            <Text style={s.sub}>{subtitulo}</Text>
           </View>
         ) : (
           <TouchableOpacity style={{ flex: 1 }} onPress={() => setTela('inicio')}>
@@ -170,9 +173,15 @@ function Principal() {
       </View>
 
       <View style={{ flex: 1 }}>
-        {tela === 'inicio' && (modo === 'pula'
-          ? <PulaPula pula={pula} config={config} onPagamento={historico.registrar} />
-          : <Brinquedos brinq={brinq} config={config} onPagamento={historico.registrar} />)}
+        {tela === 'inicio' && modo === 'pula' && (
+          <PulaPula pula={pula} config={config} onPagamento={historico.registrar} />
+        )}
+        {tela === 'inicio' && modo === 'cobranca' && (
+          <Cobranca onRegistrar={historico.registrar} />
+        )}
+        {tela === 'inicio' && modo === 'veiculos' && (
+          <Brinquedos brinq={brinq} config={config} onPagamento={historico.registrar} />
+        )}
         {tela === 'cadastro' && <CadastroBrinquedos brinq={brinq} />}
         {tela === 'relatorio' && <Relatorio historico={historico.lista} onLimpar={historico.limpar} />}
         {tela === 'valor' && <ValorMinuto config={config} setConfig={setConfig} />}
@@ -190,10 +199,10 @@ function Principal() {
       )}
 
       <Menu
-        visivel={menu} modo={modo}
+        visivel={menu} modo={modo} escolhido={!!config.modoEscolhido}
         onFechar={() => setMenu(false)}
         onModo={(m) => {
-          setConfig({ ...config, modo: m });
+          setConfig({ ...config, modo: m, modoEscolhido: true });
           if (tela === 'cadastro' && m !== 'veiculos') setTela('inicio');
         }}
         onIr={(t) => { setMenu(false); setTela(t); }}
