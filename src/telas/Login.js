@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, Image, Alert, StyleSheet, Modal, ScrollView, ActivityIndicator, Keyboard,
+  View, Text, TextInput, TouchableOpacity, Image, Alert, StyleSheet, Modal, ScrollView, ActivityIndicator, Keyboard, Linking,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -10,12 +10,28 @@ import { hashSenha, gravarCred } from '../armazenamento';
 import CampoSenha from '../componentes/CampoSenha';
 import { digitalDisponivel, digitalAtiva, definirDigital, pedirDigital } from '../biometria';
 import { pedirCodigo, confirmarCodigo, lerEmailCadastrado, mascarar, salvarEmailCadastrado } from '../recuperacao';
+import { registrarAcesso } from '../sincronizacao';
+import { URL_PRIVACIDADE, URL_TERMOS, VERSAO_TERMOS } from '../nuvem';
 import { s } from '../estilos';
 import { cor, LOGO, VERSAO } from '../tema';
 
 const PH = cor.suave;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const SENHA_MIN = 6;
 const normalizar = (v) => String(v || '').trim().toLowerCase();
+// o tamanho do código depende da configuração do Supabase; o servidor aceita de 6 a 10 dígitos
+const codigoOk = (c) => /^\d{6,8}$/.test(String(c).trim());
+const MSG_CODIGO = 'Digite o código que chegou no e-mail (6 a 8 dígitos).';
+
+const lerLock = async () => {
+  try { return JSON.parse((await SecureStore.getItemAsync('mc_lock')) || '{}'); } catch (err) { return {}; }
+};
+const gravarLock = async (v) => {
+  try {
+    if (v) await SecureStore.setItemAsync('mc_lock', JSON.stringify(v));
+    else await SecureStore.deleteItemAsync('mc_lock');
+  } catch (err) {}
+};
 
 export default function Login({ config, setConfig, onEntrar, onResetar }) {
   const primeiro = !config.senhaHash;
@@ -23,6 +39,7 @@ export default function Login({ config, setConfig, onEntrar, onResetar }) {
   const [emailNovo, setEmailNovo] = useState('');
   const [senha, setSenha] = useState('');
   const [senha2, setSenha2] = useState('');
+  const [aceito, setAceito] = useState(false);
   const [tecladoAlt, setTecladoAlt] = useState(0);
 
   const [bioOk, setBioOk] = useState(false);
@@ -60,6 +77,8 @@ export default function Login({ config, setConfig, onEntrar, onResetar }) {
     return () => { vivo = false; };
   }, [primeiro]);
 
+  const abrir = (url) => Linking.openURL(url).catch(() => Alert.alert('Não foi possível abrir o link', url));
+
   const oferecerDigital = async () => {
     try {
       const recusou = (await SecureStore.getItemAsync('mc_bio_recusou')) === '1';
@@ -96,8 +115,9 @@ export default function Login({ config, setConfig, onEntrar, onResetar }) {
       const em = normalizar(emailNovo);
       if (usuario.trim().length < 3) return Alert.alert('Usuário curto', 'Use pelo menos 3 letras.');
       if (!EMAIL_RE.test(em)) return Alert.alert('E-mail inválido', 'Digite um e-mail válido para poder recuperar a senha.');
-      if (senha.length < 4) return Alert.alert('Senha curta', 'Use pelo menos 4 caracteres.');
+      if (senha.length < SENHA_MIN) return Alert.alert('Senha curta', `Use pelo menos ${SENHA_MIN} caracteres.`);
       if (senha !== senha2) return Alert.alert('Senhas diferentes', 'Digite a mesma senha nos dois campos.');
+      if (!aceito) return Alert.alert('Termos e privacidade', 'Para continuar, aceite os Termos de Uso e a Política de Privacidade.');
       setCarreg(true); setMsg('');
       const r = await pedirCodigo(em, 'cadastro');
       setCarreg(false);
@@ -107,14 +127,28 @@ export default function Login({ config, setConfig, onEntrar, onResetar }) {
       setVerCad(true);
       return;
     }
+
+    const lk = await lerLock();
+    if (lk.ate && Date.now() < lk.ate) {
+      const min = Math.ceil((lk.ate - Date.now()) / 60000);
+      return Alert.alert('Muitas tentativas', `Aguarde ${min} min para tentar de novo, ou use "Esqueci a senha".`);
+    }
     setCarreg(true);
     let certo = false;
     try {
       certo = usuario.trim() === config.usuario && (await hashSenha(senha, config.salt)) === config.senhaHash;
     } catch (err) {}
     setCarreg(false);
-    if (certo) oferecerDigital();
-    else Alert.alert('Não foi possível entrar', 'Usuário ou senha incorretos.');
+    if (certo) {
+      await gravarLock(null);
+      oferecerDigital();
+    } else {
+      const n = (lk.n || 0) + 1;
+      const ate = n >= 5 ? Date.now() + Math.min(30, 2 ** (n - 5)) * 60000 : 0;
+      await gravarLock({ n, ate });
+      registrarAcesso('falha_login', null, VERSAO); // nunca envia o que foi digitado
+      Alert.alert('Não foi possível entrar', 'Usuário ou senha incorretos.');
+    }
   };
 
   const reenviarCadastro = async () => {
@@ -127,7 +161,7 @@ export default function Login({ config, setConfig, onEntrar, onResetar }) {
 
   const confirmarCadastro = async () => {
     if (carreg) return;
-    if (codigo.trim().length !== 8) return setMsg('Digite o código de 8 dígitos.');
+    if (!codigoOk(codigo)) return setMsg(MSG_CODIGO);
     setCarreg(true); setMsg('');
     const em = normalizar(emailNovo);
     const r = await confirmarCodigo(em, codigo.trim());
@@ -137,7 +171,11 @@ export default function Login({ config, setConfig, onEntrar, onResetar }) {
       const senhaHash = await hashSenha(senha, salt);
       await gravarCred(salt, senhaHash);
       await salvarEmailCadastrado(em);
-      setConfig({ ...config, usuario: usuario.trim(), salt, senhaHash });
+      setConfig({
+        ...config, usuario: usuario.trim(), salt, senhaHash,
+        aceite: { versao: VERSAO_TERMOS, em: Date.now() },
+      });
+      registrarAcesso('aceite_termos', usuario.trim(), VERSAO);
       setCarreg(false);
       setVerCad(false);
       oferecerDigital();
@@ -160,13 +198,13 @@ export default function Login({ config, setConfig, onEntrar, onResetar }) {
     setCarreg(false);
     if (!r.ok) return setMsg(r.erro);
     setPasso('codigo');
-    setMsg(`Enviamos um código para ${mascarar(emailCad)}. Vale por 10 minutos.`);
+    setMsg(`Enviamos um código para ${mascarar(emailCad)}. Confira também o spam.`);
   };
 
   const redefinir = async () => {
     if (carreg) return;
-    if (codigo.trim().length !== 8) return setMsg('Digite o código de 6 dígitos.');
-    if (nova.length < 4) return setMsg('A senha nova precisa ter pelo menos 4 caracteres.');
+    if (!codigoOk(codigo)) return setMsg(MSG_CODIGO);
+    if (nova.length < SENHA_MIN) return setMsg(`A senha nova precisa ter pelo menos ${SENHA_MIN} caracteres.`);
     if (nova !== nova2) return setMsg('As duas senhas precisam ser iguais.');
     setCarreg(true); setMsg('');
     const r = await confirmarCodigo(emailCad, codigo.trim());
@@ -175,6 +213,7 @@ export default function Login({ config, setConfig, onEntrar, onResetar }) {
       const salt = Crypto.randomUUID();
       const senhaHash = await hashSenha(nova, salt);
       await gravarCred(salt, senhaHash);
+      await gravarLock(null);
       setConfig({ ...config, salt, senhaHash });
       setCarreg(false);
       setRec(false);
@@ -188,7 +227,7 @@ export default function Login({ config, setConfig, onEntrar, onResetar }) {
   const apagarTudo = () =>
     Alert.alert(
       'Apagar tudo',
-      'Isso apaga usuário, senha, Mercado Pago, brinquedos e histórico deste celular. É como reinstalar o app. Continuar?',
+      'Isso apaga usuário, senha, Mercado Pago, brinquedos e histórico deste celular e a cópia deste aparelho na nuvem. É como reinstalar o app. Continuar?',
       [{ text: 'Cancelar' }, { text: 'Apagar tudo', style: 'destructive', onPress: () => { setRec(false); setVerCad(false); onResetar(); } }]
     );
 
@@ -208,7 +247,7 @@ export default function Login({ config, setConfig, onEntrar, onResetar }) {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <Image source={LOGO} style={e.logo} resizeMode="contain" />
+        <Image source={LOGO} style={e.logo} resizeMode="contain" accessibilityLabel="Logo do MinutoCerto" />
         <Text style={e.loginTitulo}>
           Minuto<Text style={{ color: cor.verde }}>Certo</Text>
         </Text>
@@ -222,6 +261,7 @@ export default function Login({ config, setConfig, onEntrar, onResetar }) {
             autoCorrect={false}
             value={usuario}
             onChangeText={setUsuario}
+            accessibilityLabel="Usuário"
           />
           {primeiro && (
             <TextInput
@@ -233,11 +273,34 @@ export default function Login({ config, setConfig, onEntrar, onResetar }) {
               keyboardType="email-address"
               value={emailNovo}
               onChangeText={setEmailNovo}
+              accessibilityLabel="E-mail"
             />
           )}
           <CampoSenha margemTopo={10} placeholder="Senha" placeholderTextColor={PH} value={senha} onChangeText={setSenha} />
           {primeiro && (
             <CampoSenha margemTopo={10} placeholder="Repita a senha" placeholderTextColor={PH} value={senha2} onChangeText={setSenha2} />
+          )}
+          {primeiro && (
+            <View style={e.linhaAceite}>
+              <TouchableOpacity
+                onPress={() => setAceito((v) => !v)}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: aceito }}
+                accessibilityLabel="Aceito os Termos de Uso e a Política de Privacidade"
+              >
+                <MaterialCommunityIcons
+                  name={aceito ? 'checkbox-marked' : 'checkbox-blank-outline'}
+                  size={26}
+                  color={aceito ? cor.verde : cor.suave}
+                />
+              </TouchableOpacity>
+              <Text style={e.txtAceite}>
+                Li e aceito os{' '}
+                <Text style={e.linkAceite} onPress={() => abrir(URL_TERMOS)}>Termos de Uso</Text>
+                {' '}e a{' '}
+                <Text style={e.linkAceite} onPress={() => abrir(URL_PRIVACIDADE)}>Política de Privacidade</Text>.
+              </Text>
+            </View>
           )}
           <TouchableOpacity
             style={[s.botaoGrande, { backgroundColor: cor.verde }, carreg && { opacity: 0.6 }]}
@@ -258,6 +321,9 @@ export default function Login({ config, setConfig, onEntrar, onResetar }) {
         {!primeiro && (
           <TouchableOpacity onPress={abrirRec}><Text style={s.link}>Esqueci a senha</Text></TouchableOpacity>
         )}
+        <TouchableOpacity onPress={() => abrir(URL_PRIVACIDADE)}>
+          <Text style={[s.link, { color: cor.suave, fontSize: 13 }]}>Privacidade e termos</Text>
+        </TouchableOpacity>
         <Text style={e.versaoLogin}>Versão {VERSAO}</Text>
       </ScrollView>
 
@@ -272,12 +338,13 @@ export default function Login({ config, setConfig, onEntrar, onResetar }) {
               <Text style={e.modalTxt}>Digite o código enviado para {mascarar(emailNovo)}.</Text>
               <TextInput
                 style={s.input}
-                placeholder="Código de 8 dígitos"
+                placeholder="Código do e-mail"
                 placeholderTextColor={PH}
                 keyboardType="number-pad"
                 maxLength={8}
                 value={codigo}
                 onChangeText={setCodigo}
+                accessibilityLabel="Código recebido por e-mail"
               />
               <TouchableOpacity
                 style={[s.botaoGrande, { backgroundColor: cor.verde }, carreg && { opacity: 0.6 }]}
@@ -327,12 +394,13 @@ export default function Login({ config, setConfig, onEntrar, onResetar }) {
                 <>
                   <TextInput
                     style={s.input}
-                    placeholder="Código de 6 dígitos"
+                    placeholder="Código do e-mail"
                     placeholderTextColor={PH}
                     keyboardType="number-pad"
-                    maxLength={6}
+                    maxLength={8}
                     value={codigo}
                     onChangeText={setCodigo}
+                    accessibilityLabel="Código recebido por e-mail"
                   />
                   <CampoSenha margemTopo={10} placeholder="Senha nova" placeholderTextColor={PH} value={nova} onChangeText={setNova} />
                   <CampoSenha margemTopo={10} placeholder="Repita a senha nova" placeholderTextColor={PH} value={nova2} onChangeText={setNova2} />
@@ -373,4 +441,7 @@ const e = StyleSheet.create({
   fundoModal: { flex: 1, backgroundColor: 'rgba(16,33,46,0.6)' },
   modalTitulo: { fontSize: 20, fontWeight: '800', color: cor.tinta, marginBottom: 10 },
   modalTxt: { fontSize: 14, color: cor.suave, lineHeight: 20, marginBottom: 6 },
+  linhaAceite: { flexDirection: 'row', alignItems: 'flex-start', marginTop: 14 },
+  txtAceite: { flex: 1, marginLeft: 10, fontSize: 13, lineHeight: 19, color: cor.tinta },
+  linkAceite: { color: cor.azul, fontWeight: '700', textDecorationLine: 'underline' },
 });

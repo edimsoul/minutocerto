@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Alert, Modal, Vibration, KeyboardAvoidingView, Platform } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import Cobranca from '../componentes/Cobranca';
+import Cobranca from '../telas/Cobranca';
 import Botao from '../componentes/Botao';
 import { s } from '../estilos';
 import { cor, ICONES } from '../tema';
@@ -15,6 +15,7 @@ const rotuloPessoa = (v) => v.numero;
 
 const PREDEFINIDOS = [5, 10, 15];
 const PADRAO_VIBRACAO = [0, 600, 300, 600, 300, 600];
+const TOLERANCIA_MIN = 2;
 
 const FUNDOS = [
   '#EAF3FC',
@@ -29,6 +30,31 @@ const FUNDO_ESGOTADO = '#FDECEC';
 
 const TEXTO_INPUT = { color: '#000' };
 const COR_PLACEHOLDER = '#6b7280';
+
+function valorACobrar(v, agora, preco, modoCobranca) {
+  const ms = decorrido(v, agora);
+  const pacote = v.pacote;
+
+  if (!pacote) return calcValor(ms, preco);
+
+  const pacoteMs = pacote * 60000;
+  const toleranciaMs = TOLERANCIA_MIN * 60000;
+
+  if (ms < pacoteMs) {
+    if (modoCobranca === 'integral') return calcValor(pacoteMs, preco);
+    return calcValor(ms, preco);
+  }
+
+  if (ms <= pacoteMs + toleranciaMs) return calcValor(pacoteMs, preco);
+
+  const excedenteMs = ms - (pacoteMs + toleranciaMs);
+  return calcValor(pacoteMs, preco) + calcValor(excedenteMs, preco);
+}
+
+function precisaEscolherCobranca(v, agora) {
+  if (!v.pacote) return false;
+  return decorrido(v, agora) < v.pacote * 60000;
+}
 
 function SeletorTempo({ valor, onChange }) {
   const ehOutro = valor != null && !PREDEFINIDOS.includes(valor);
@@ -89,15 +115,25 @@ function SeletorTempo({ valor, onChange }) {
 export default function PulaPula({ pula, config, onPagamento }) {
   const agora = useAgora();
   const [nome, setNome] = useState('');
-  const [pacote, setPacote] = useState(null);
+  // NOVO: controla o modal de escolha de tempo (aberto ao tocar em Iniciar)
+  const [escolhendoTempo, setEscolhendoTempo] = useState(false);
+  // Tempo escolhido DENTRO do modal
+  const [pacoteModal, setPacoteModal] = useState(null);
+
   const [cobrancaId, setCobrancaId] = useState(null);
   const [editandoId, setEditandoId] = useState(null);
   const [avisos, setAvisos] = useState([]);
   const avisados = useRef(new Set());
 
+  // Escolha de cobrança por id: { [id]: 'integral' | 'corrido' }
+  const [modoCobranca, setModoCobranca] = useState({});
+  // Id da pessoa aguardando decisão de cobrança antecipada
+  const [decidindoId, setDecidindoId] = useState(null);
+
   const preco = config.precoPula;
   const cobrando = pula.itens.find((v) => v.id === cobrancaId);
   const editando = pula.itens.find((v) => v.id === editandoId);
+  const decidindo = pula.itens.find((v) => v.id === decidindoId);
 
   useEffect(() => {
     const novos = [];
@@ -126,7 +162,49 @@ export default function PulaPula({ pula, config, onPagamento }) {
       { text: 'Excluir', style: 'destructive', onPress: () => pula.excluir(v.id) },
     ]);
 
-  const fim = async (v) => { if (await pula.finalizar(v)) setCobrancaId(v.id); };
+  const iniciar = () => {
+    if (!nome.trim()) {
+      Alert.alert('Nome obrigatório', 'Digite o nome da pessoa antes de iniciar.');
+      return;
+    }
+    setPacoteModal(null);
+    setEscolhendoTempo(true);
+  };
+
+  const confirmarTempo = () => {
+    pula.adicionar(nome, pacoteModal);
+    setNome('');
+    setPacoteModal(null);
+    setEscolhendoTempo(false);
+  };
+
+  const cancelarTempo = () => {
+    setPacoteModal(null);
+    setEscolhendoTempo(false);
+  };
+
+  const fim = (v) => {
+    if (precisaEscolherCobranca(v, agora)) {
+      setDecidindoId(v.id);
+      return;
+    }
+    finalizar(v);
+  };
+
+  const finalizar = async (v) => {
+    const modo = modoCobranca[v.id];
+    if (await pula.finalizar(v, { modoCobranca: modo, preco, agora })) setCobrancaId(v.id);
+  };
+
+  const escolherModoCobranca = (modo) => {
+    const v = decidindo;
+    if (!v) return;
+    setModoCobranca((m) => ({ ...m, [v.id]: modo }));
+    setDecidindoId(null);
+    finalizar(v);
+  };
+
+  const cancelarDecisao = () => setDecidindoId(null);
 
   return (
     <>
@@ -162,20 +240,22 @@ export default function PulaPula({ pula, config, onPagamento }) {
               placeholderTextColor={COR_PLACEHOLDER}
               value={nome}
               onChangeText={setNome}
+              onSubmitEditing={iniciar}
+              returnKeyType="go"
             />
             <TouchableOpacity
               style={[s.btnAzul, { backgroundColor: cor.verde }]}
-              onPress={() => { pula.adicionar(nome, pacote); setNome(''); }}>
+              onPress={iniciar}>
               <Text style={s.btnTxt}>Iniciar</Text>
             </TouchableOpacity>
           </View>
-
-          <Text style={[s.rotulo, { marginTop: 14 }]}>Tempo</Text>
-          <SeletorTempo valor={pacote} onChange={setPacote} />
+          <Text style={[s.ajuda, { marginTop: 8 }]}>
+            Digite o nome e toque em Iniciar. Você escolhe o tempo na próxima tela.
+          </Text>
         </View>
 
         {pula.itens.length === 0 && (
-          <Text style={s.vazio}>Ninguém no pula-pula agora.{'\n'}Digite um nome, escolha o tempo e toque em Iniciar.</Text>
+          <Text style={s.vazio}>Digite um nome e toque em Iniciar.</Text>
         )}
 
         {pula.itens.map((v, i) => {
@@ -184,7 +264,7 @@ export default function PulaPula({ pula, config, onPagamento }) {
           const temPacote = pacoteMs > 0;
           const esgotado = temPacote && ms >= pacoteMs;
           const restante = Math.max(0, pacoteMs - ms);
-          const valorAoVivo = calcValor(temPacote ? Math.max(ms, pacoteMs) : ms, preco);
+          const valorAoVivo = valorACobrar(v, agora, preco);
           const alerta = esgotado && v.status !== 'finalizado';
           const corBorda = alerta ? cor.vermelho : COR_STATUS[v.status];
           const fundo = alerta ? FUNDO_ESGOTADO : FUNDOS[i % FUNDOS.length];
@@ -193,7 +273,7 @@ export default function PulaPula({ pula, config, onPagamento }) {
             <View key={v.id} style={[s.veiculo, { borderLeftColor: corBorda, backgroundColor: fundo }]}>
               <View style={s.veiculoTopo}>
                 <View style={s.numero}>
-                  <MaterialCommunityIcons name={ICONES['Pula-pula']} size={32} color={cor.branco} />
+                  <MaterialCommunityIcons name={ICONES['Pula-pula']} size={35} color={cor.azul} />
                 </View>
                 <View style={{ flex: 1, marginLeft: 12 }}>
                   <Text style={s.tipo}>{rotuloPessoa(v)}</Text>
@@ -230,7 +310,7 @@ export default function PulaPula({ pula, config, onPagamento }) {
                   <Botao txt="Fim" c={cor.vermelho} onPress={() => fim(v)} />
                 </>)}
                 {v.status !== 'finalizado' && (
-                  <Botao txt="Tempo" c={cor.azul} onPress={() => setEditandoId(v.id)} />
+                  <Botao txt="+ Tempo" c={cor.azul} onPress={() => setEditandoId(v.id)} />
                 )}
                 {v.status === 'finalizado' && <Botao txt="Cobrar" c={cor.azul} onPress={() => setCobrancaId(v.id)} />}
               </View>
@@ -243,6 +323,128 @@ export default function PulaPula({ pula, config, onPagamento }) {
           );
         })}
       </ScrollView>
+
+      {/* NOVO: modal de escolha de tempo ao iniciar */}
+      <Modal visible={escolhendoTempo} transparent animationType="fade" onRequestClose={cancelarTempo}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <ScrollView
+            contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 20 }}
+            keyboardShouldPersistTaps="handled">
+            <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 18 }}>
+              <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 4, color: '#000' }}>
+                Tempo de {nome || 'nova pessoa'}
+              </Text>
+              <Text style={{ color: cor.suave, marginBottom: 16 }}>
+                Escolha quanto tempo essa pessoa vai brincar.
+              </Text>
+
+              <SeletorTempo valor={pacoteModal} onChange={setPacoteModal} />
+
+              <TouchableOpacity
+                onPress={confirmarTempo}
+                activeOpacity={0.8}
+                style={{
+                  marginTop: 20,
+                  backgroundColor: cor.verde,
+                  borderRadius: 12,
+                  paddingVertical: 16,
+                  alignItems: 'center',
+                  alignSelf: 'stretch',
+                  minHeight: 54,
+                }}>
+                <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800' }}>
+                  {pacoteModal == null ? 'Iniciar · tempo livre' : `Iniciar · ${pacoteModal} min`}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={cancelarTempo}
+                activeOpacity={0.8}
+                style={{ marginTop: 12, alignItems: 'center', paddingVertical: 10 }}>
+                <Text style={{ color: cor.suave, fontWeight: '700' }}>Cancelar</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Modal de escolha de cobrança antecipada */}
+      <Modal visible={!!decidindo} transparent animationType="fade" onRequestClose={cancelarDecisao}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <ScrollView
+            contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 20 }}
+            keyboardShouldPersistTaps="handled">
+            {decidindo && (
+              <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 18 }}>
+                <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 4, color: '#000' }}>
+                  Encerramento antecipado
+                </Text>
+                <Text style={{ color: cor.suave, marginBottom: 16 }}>
+                  {decidindo.numero} · {fmtTempo(decorrido(decidindo, agora))} corridos de {decidindo.pacote} min
+                </Text>
+
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => escolherModoCobranca('integral')}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    backgroundColor: '#F4F8FE',
+                    borderRadius: 12,
+                    padding: 14,
+                    borderWidth: 2,
+                    borderColor: cor.azul,
+                  }}>
+                  <MaterialCommunityIcons name="cash-multiple" size={28} color={cor.azul} />
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={{ fontSize: 16, fontWeight: '800', color: '#000' }}>Cobrar valor integral</Text>
+                    <Text style={{ fontSize: 12, color: cor.suave, marginTop: 2 }}>
+                      {brl(calcValor(decidindo.pacote * 60000, preco))} · pacote contratado
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => escolherModoCobranca('corrido')}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    backgroundColor: '#EEF8F1',
+                    borderRadius: 12,
+                    padding: 14,
+                    borderWidth: 2,
+                    borderColor: cor.verde,
+                    marginTop: 10,
+                  }}>
+                  <MaterialCommunityIcons name="timer-sand" size={28} color={cor.verde} />
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={{ fontSize: 16, fontWeight: '800', color: '#000' }}>Cobrar só o tempo corrido</Text>
+                    <Text style={{ fontSize: 12, color: cor.suave, marginTop: 2 }}>
+                      {brl(calcValor(decorrido(decidindo, agora), preco))} · minutos usados
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={cancelarDecisao}
+                  activeOpacity={0.8}
+                  style={{
+                    marginTop: 16,
+                    alignItems: 'center',
+                    paddingVertical: 12,
+                  }}>
+                  <Text style={{ color: cor.suave, fontWeight: '700' }}>Cancelar</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
 
       <Modal visible={!!editando} transparent animationType="fade" onRequestClose={() => setEditandoId(null)}>
         <KeyboardAvoidingView
@@ -295,6 +497,7 @@ export default function PulaPula({ pula, config, onPagamento }) {
             onPagamento(h);
             pula.liberar(lista.map((v) => v.id), h);
             setCobrancaId(null);
+            setModoCobranca({});
           }}
         />
       )}

@@ -1,8 +1,9 @@
-// Envio opcional ao servidor. Cada celular tem seu próprio deviceId,
+// Envio opcional ao servidor. Cada celular tem seu próprio identificador e segredo,
 // então os dados da Maria nunca se misturam com os do Pedro.
-// Senha, salt, hash e token NUNCA são enviados.
+// Senha, salt, hash e token NUNCA são enviados. Nomes de pessoas do pula-pula viram numeração.
 import { useEffect, useRef } from 'react';
-import { SERVIDOR, APP_KEY, configuracaoPendente, obterDeviceId } from './nuvem';
+import { SERVIDOR, configuracaoPendente, cabecalhos } from './nuvem';
+import { mascararPessoas } from './armazenamento';
 
 // remove, em qualquer nível, campos sensíveis
 const PROIBIDO = /senha|salt|hash|token|cred/i;
@@ -16,16 +17,17 @@ function limpar(v) {
   return v;
 }
 
+const LIMITE_BYTES = 4000000;
+
 async function enviar(rota, corpo) {
-  const deviceId = await obterDeviceId();
   await fetch(`${SERVIDOR}${rota}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-app-key': APP_KEY },
-    body: JSON.stringify({ deviceId, ...corpo }),
+    headers: await cabecalhos(),
+    body: JSON.stringify(corpo),
   });
 }
 
-// registra eventos (abriu_app, login, logout, reset_senha). Nunca derruba o app.
+// registra eventos (abriu_app, login, logout, falha_login, reset_senha, aceite_termos). Nunca derruba o app.
 export async function registrarAcesso(evento, usuario, versao) {
   try {
     if (configuracaoPendente()) return;
@@ -36,9 +38,12 @@ export async function registrarAcesso(evento, usuario, versao) {
 // envia uma cópia dos dados deste celular quando "ativo" for true. Nunca derruba o app.
 export function useSincronizacao(dados, ativo, versao) {
   const timer = useRef(null);
-  const json = ativo ? JSON.stringify(limpar(dados)) : '';
+  let json = '';
+  if (ativo) {
+    try { json = JSON.stringify(limpar(mascararPessoas(dados))); } catch (e) { json = ''; }
+  }
   useEffect(() => {
-    if (!ativo || configuracaoPendente()) return;
+    if (!ativo || !json || configuracaoPendente() || json.length > LIMITE_BYTES) return undefined;
     clearTimeout(timer.current);
     timer.current = setTimeout(async () => {
       try { await enviar('/sincronizar', { versao, dados: JSON.parse(json) }); } catch (e) {}

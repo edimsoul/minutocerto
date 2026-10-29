@@ -8,23 +8,28 @@ import { cor } from '../tema';
 import { brl } from '../util';
 import { criarPix, statusPix, configuracaoPendente } from '../nuvem';
 
-// "12,50" -> 12.5
-const paraNumero = (txt) => {
-  const n = parseFloat(String(txt).replace(/\./g, '').replace(',', '.'));
-  return Number.isFinite(n) ? n : 0;
+// Formata centavos inteiros como 1.234,56 (a vírgula separa os centavos)
+const fmtCent = (c) => {
+  const [i, d] = (c / 100).toFixed(2).split('.');
+  return i.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + d;
 };
 
 const PAGO = ['approved', 'pago', 'paid'];
 
+// campos de texto: letra e texto de exemplo (placeholder) pretos
+const PRETO = '#1f1c1c';
+const estiloPreto = { color: PRETO };
+
 export default function Cobranca({ onRegistrar }) {
   const [descricao, setDescricao] = useState('');
-  const [valorTxt, setValorTxt] = useState('');
+  const [valorCent, setValorCent] = useState(0); // valor digitado, em centavos
   const [gerando, setGerando] = useState(false);
   const [pix, setPix] = useState(null);   // { id, copiaECola, qrBase64, valor, descricao }
   const [pago, setPago] = useState(false);
   const registrado = useRef(false);
+  const inputValor = useRef(null);
 
-  const valor = paraNumero(valorTxt);
+  const valor = valorCent / 100;
 
   const montarItem = (metodo, v, d) => ({
     id: String(Date.now()),
@@ -55,6 +60,12 @@ export default function Cobranca({ onRegistrar }) {
     return () => { ativo = false; clearInterval(t); };
   }, [pix, pago]);
 
+  // Digite só os números: 565 vira 5,65. Ponto ou vírgula digitados são ignorados.
+  const aoDigitarValor = (t) => {
+    const n = parseInt(String(t).replace(/\D/g, '') || '0', 10);
+    setValorCent(Math.min(n, 99999999));
+  };
+
   const gerar = async () => {
     if (configuracaoPendente()) {
       return Alert.alert('Mercado Pago', 'Conecte a conta em Menu > Mercado Pago primeiro.');
@@ -75,11 +86,31 @@ export default function Cobranca({ onRegistrar }) {
     }
   };
 
-  const registrarDinheiro = () => {
-    if (valor < 1) return Alert.alert('Valor', 'O valor mínimo é R$ 1,00.');
+  const confirmarDinheiro = () => {
     onRegistrar && onRegistrar(montarItem('Dinheiro', valor, descricao.trim()));
     Alert.alert('Registrado', `${brl(valor)} em dinheiro.`);
     nova();
+  };
+
+  // ao tocar em "Recebi em dinheiro": confirma o valor ou deixa digitar outro
+  const registrarDinheiro = () => {
+    if (valor < 1) return Alert.alert('Valor', 'O valor mínimo é R$ 1,00.');
+    Keyboard.dismiss();
+    Alert.alert(
+      'Confirmar valor',
+      `Recebeu ${brl(valor)} em dinheiro?`,
+      [
+        {
+          text: 'Digitar outro valor',
+          onPress: () => {
+            setValorCent(0);
+            setTimeout(() => inputValor.current && inputValor.current.focus(), 150);
+          },
+        },
+        { text: `Sim, ${brl(valor)}`, onPress: confirmarDinheiro },
+      ],
+      { cancelable: true },
+    );
   };
 
   const compartilharCodigo = () => {
@@ -90,7 +121,7 @@ export default function Cobranca({ onRegistrar }) {
     setPix(null);
     setPago(false);
     setDescricao('');
-    setValorTxt('');
+    setValorCent(0);
   };
 
   return (
@@ -108,8 +139,9 @@ export default function Cobranca({ onRegistrar }) {
 
         <Text style={s.rotulo}>Descrição</Text>
         <TextInput
-          style={s.input}
+          style={[s.input, estiloPreto]}
           placeholder="Ex.: Festa de aniversário, 2 pulseiras..."
+          placeholderTextColor={PRETO}
           value={descricao}
           onChangeText={setDescricao}
           editable={!pix}
@@ -118,14 +150,22 @@ export default function Cobranca({ onRegistrar }) {
 
         <Text style={[s.rotulo, { marginTop: 14 }]}>Valor (R$)</Text>
         <TextInput
-          style={[s.input, { fontSize: 22, fontWeight: '800' }]}
+          ref={inputValor}
+          style={[s.input, estiloPreto, { fontSize: 22, fontWeight: '800' }]}
           placeholder="0,00"
-          keyboardType="decimal-pad"
-          value={valorTxt}
-          onChangeText={(t) => setValorTxt(t.replace(/[^0-9,.]/g, ''))}
+          placeholderTextColor={PRETO}
+          keyboardType="number-pad"
+          value={valorCent ? fmtCent(valorCent) : ''}
+          onChangeText={aoDigitarValor}
           editable={!pix}
         />
-        {valor > 0 && !pix && <Text style={{ color: cor.suave, marginTop: 6 }}>Será cobrado: {brl(valor)}</Text>}
+        {!pix && (
+          <Text style={{ color: cor.suave, marginTop: 6 }}>
+            {valorCent > 0
+              ? `Será cobrado: ${brl(valor)}`
+              : 'Digite só os números: 565 vira R$ 5,65 (os 2 últimos são os centavos).'}
+          </Text>
+        )}
       </View>
 
       {!pix ? (

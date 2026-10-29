@@ -1,13 +1,13 @@
 // Backup na nuvem ligado ao e-mail (o mesmo da recuperação de senha).
 import * as Crypto from 'expo-crypto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { CHAVES, lerJSON, salvarJSON, sec, prontoMigracao } from './armazenamento';
+import { CHAVES, lerJSON, salvarJSON, sec, prontoMigracao, mascararPessoas } from './armazenamento';
 import { VERSAO } from './tema';
 import { SERVIDOR as BASE, APP_KEY } from './nuvem';
 
 const CHAVE_TOKEN = 'mc_token'; // já é apagada pelo apagarTudo()
 const UM_DIA = 24 * 3600 * 1000;
-const SEGREDOS_CONFIG = ['senhaHash', 'salt']; // nunca vão para a nuvem
+const PROIBIDO = /senha|salt|hash|token|cred/i; // nunca vai para a nuvem nem volta dela
 
 const sha = (t) => Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, t);
 
@@ -22,7 +22,7 @@ export const lerStatus = () => lerJSON(CHAVES.backupMeta, {}); // { ultimoEnvio,
 
 async function chamar(metodo, caminho, corpo, token) {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 60000); // 60s: o Render gratuito demora para acordar
+  const timer = setTimeout(() => ctrl.abort(), 60000); // 60s: o Render pode demorar para acordar
   try {
     const r = await fetch(BASE + caminho, {
       method: metodo,
@@ -39,7 +39,32 @@ async function chamar(metodo, caminho, corpo, token) {
   }
 }
 
-// junta os dados do aparelho (sem senha/salt)
+// remove campos sensíveis em qualquer nível
+function limparObj(v, prof = 0) {
+  if (prof > 8) return null;
+  if (Array.isArray(v)) return v.map((x) => limparObj(x, prof + 1));
+  if (v && typeof v === 'object') {
+    const o = {};
+    for (const k of Object.keys(v)) if (!PROIBIDO.test(k)) o[k] = limparObj(v[k], prof + 1);
+    return o;
+  }
+  return v;
+}
+const listaDeObjetos = (a, max) =>
+  (Array.isArray(a) ? a : []).filter((x) => x && typeof x === 'object' && !Array.isArray(x)).slice(0, max);
+
+// Valida e limpa o que veio da nuvem antes de gravar no celular
+function sanear(d) {
+  const x = d && typeof d === 'object' ? d : {};
+  return {
+    brinquedos: listaDeObjetos(x.brinquedos, 2000).map((i) => limparObj(i)),
+    pula: listaDeObjetos(x.pula, 500).map((i) => limparObj(i)),
+    historico: listaDeObjetos(x.historico, 50000).map((i) => limparObj(i)),
+    config: x.config && typeof x.config === 'object' && !Array.isArray(x.config) ? limparObj(x.config) : {},
+  };
+}
+
+// junta os dados do aparelho (sem senha/salt e sem nomes de pessoas)
 export async function montarBackup() {
   await prontoMigracao;
   const [brinquedos, pula, historico, config] = await Promise.all([
@@ -48,9 +73,8 @@ export async function montarBackup() {
     lerJSON(CHAVES.historico, []),
     lerJSON(CHAVES.config, {}),
   ]);
-  const cfg = { ...config };
-  SEGREDOS_CONFIG.forEach((k) => delete cfg[k]);
-  const conteudo = JSON.stringify({ v: 1, dados: { brinquedos, pula, historico, config: cfg } });
+  const dados = limparObj(mascararPessoas({ brinquedos, pula, historico, config }));
+  const conteudo = JSON.stringify({ v: 1, dados });
   const vazio = !brinquedos.length && !pula.length && !historico.length;
   return { conteudo, hash: await sha(conteudo), vazio };
 }
@@ -73,7 +97,10 @@ export async function fazerBackup({ forcar = false } = {}) {
     await salvarJSON(CHAVES.backupMeta, { ...meta, sessaoExpirada: true });
     return { ok: false, motivo: 'sessao', erro: 'Sessão do backup expirou. Ative de novo.' };
   }
-  if (!r.ok) return { ok: false, erro: r.erro || 'Não foi possível enviar o backup.' };
+  if (!r.ok) {
+    await salvarJSON(CHAVES.backupMeta, { ...meta, ultimoErro: r.erro || 'Falha ao enviar', ultimoErroEm: Date.now() });
+    return { ok: false, erro: r.erro || 'Não foi possível enviar o backup.' };
+  }
   await salvarJSON(CHAVES.backupMeta, { ultimoEnvio: Date.now(), ultimoHash: b.hash });
   return { ok: true };
 }
@@ -91,12 +118,13 @@ export async function backupSeNecessario() {
   }
 }
 
-// baixa e valida o backup mais recente (hash + versão do formato)
+// baixa e valida o backup mais recente (hash + formato)
 export async function baixarUltimo() {
   const token = await sec.get(CHAVE_TOKEN);
   if (!token) return { ok: false, erro: 'Sessão não encontrada. Confirme seu e-mail de novo.' };
   const r = await chamar('GET', '/backup/ultimo', null, token);
   if (r.status === 404) return { ok: false, erro: 'Não há backup salvo para este e-mail.' };
+  if (r.status === 401) return { ok: false, erro: 'Sessão expirada. Confirme seu e-mail de novo.' };
   if (!r.ok) return { ok: false, erro: r.erro || 'Não foi possível baixar o backup.' };
   if ((await sha(String(r.conteudo))) !== r.hash) return { ok: false, erro: 'O backup veio corrompido. Tente de novo.' };
   let j = null;
@@ -104,16 +132,17 @@ export async function baixarUltimo() {
   if (!j || j.v !== 1 || !j.dados || !Array.isArray(j.dados.brinquedos) || !Array.isArray(j.dados.historico)) {
     return { ok: false, erro: 'Este backup tem um formato que o app não reconhece.' };
   }
-  return { ok: true, dados: j.dados, criadoEm: new Date(r.criadoEm).getTime(), versaoApp: r.versaoApp };
+  return { ok: true, dados: sanear(j.dados), criadoEm: new Date(r.criadoEm).getTime(), versaoApp: r.versaoApp };
 }
 
 // grava os dados restaurados. Se algo falhar, devolve o estado anterior ("desfazer")
 export async function restaurar(dados) {
+  const d = sanear(dados);
   const pares = [
-    [CHAVES.brinquedos, Array.isArray(dados.brinquedos) ? dados.brinquedos : []],
-    [CHAVES.pula, Array.isArray(dados.pula) ? dados.pula : []],
-    [CHAVES.historico, Array.isArray(dados.historico) ? dados.historico : []],
-    [CHAVES.config, dados.config && typeof dados.config === 'object' ? dados.config : {}],
+    [CHAVES.brinquedos, d.brinquedos],
+    [CHAVES.pula, d.pula],
+    [CHAVES.historico, d.historico],
+    [CHAVES.config, d.config],
   ];
   const antes = await AsyncStorage.multiGet(pares.map((p) => p[0]));
   const desfazer = async () => {
@@ -142,10 +171,16 @@ export async function apagarBackupNuvem() {
   return { ok: r.ok, erro: r.erro };
 }
 
-// ativa o backup só com o e-mail (sem código). Se o e-mail já tem backup, o servidor recusa e pede o código.
-export async function ativarBackupLivre(email) {
-  const r = await chamar('POST', '/recuperacao/backup-livre', { email }, '');
-  if (!r.ok || !r.token) return { ok: false, erro: r.erro || 'Não foi possível ativar o backup.' };
-  await guardarToken(r.token);
-  return { ok: true };
+// exclui TUDO ligado ao e-mail na nuvem: backups, sessões e o cadastro do e-mail
+export async function apagarContaBackup() {
+  const token = await sec.get(CHAVE_TOKEN);
+  if (!token) return { ok: false, erro: 'Sessão não encontrada.' };
+  const r = await chamar('DELETE', '/backup/conta', null, token);
+  return { ok: r.ok, erro: r.erro };
+}
+
+// DESATIVADO por segurança: ativar o backup sem confirmar o e-mail deixava qualquer pessoa
+// ocupar o e-mail de outra. O backup agora só liga depois do código enviado por e-mail.
+export async function ativarBackupLivre() {
+  return { ok: false, erro: 'Para ativar o backup, confirme seu e-mail com o código que enviamos.' };
 }

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Modal, Alert, Vibration, StyleSheet } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import Cobranca from '../componentes/Cobranca';
+import Cobranca from '../telas/Cobranca';
 import Botao from '../componentes/Botao';
 import LeitorQR from './LeitorQR';
 import { s } from '../estilos';
@@ -17,8 +17,44 @@ const COR_STATUS = { livre: cor.suave, rodando: cor.verde, pausado: cor.ambar, f
 const LINHA_1 = [10, 15, 20];
 const LINHA_2 = [25, 30];
 
-// Espaço no fim das janelas para os botões ficarem acima da barra do Android.
+// Tolerância: encerrar até limite + 2 min cobra o valor do tempo contratado.
+const TOLERANCIA_MIN = 2;
+
 const PAD_JANELA = { padding: 20, paddingBottom: 120 };
+
+// Calcula o valor a cobrar de um brinquedo.
+// modoCobranca (opcional) só é usado quando o operador foi perguntado
+// (encerramento antecipado). Pode ser 'integral' ou 'corrido'.
+function valorACobrar(v, agora, preco, modoCobranca) {
+  const ms = decorrido(v, agora);
+  const limite = v.limite;
+
+  // Tempo livre: sempre proporcional corrido.
+  if (!limite) return calcValor(ms, preco);
+
+  const limiteMs = limite * 60000;
+  const toleranciaMs = TOLERANCIA_MIN * 60000;
+
+  // Encerrou antes do tempo contratado → o operador já foi perguntado.
+  if (ms < limiteMs) {
+    if (modoCobranca === 'integral') return calcValor(limiteMs, preco);
+    // 'corrido' ou indefinido → proporcional do tempo usado
+    return calcValor(ms, preco);
+  }
+
+  // Dentro da tolerância (limite até limite + 2 min) → valor integral do tempo contratado.
+  if (ms <= limiteMs + toleranciaMs) return calcValor(limiteMs, preco);
+
+  // Passou da tolerância → valor contratado + proporcional do que excedeu a tolerância.
+  const excedenteMs = ms - (limiteMs + toleranciaMs);
+  return calcValor(limiteMs, preco) + calcValor(excedenteMs, preco);
+}
+
+// Só pergunta quando o brinquedo tem tempo fixo e foi encerrado ANTES do tempo contratado.
+function precisaEscolherCobranca(v, agora) {
+  if (!v.limite) return false;
+  return decorrido(v, agora) < v.limite * 60000;
+}
 
 function AcoesBrinquedo({ v, brinq, aoIniciar, aoEncerrar, aoCobrar, depois }) {
   const f = (fn) => () => { fn(); if (depois) depois(); };
@@ -77,7 +113,7 @@ function CartaoBrinquedo({ v, agora, preco, brinq, limiteMin, aoIniciar, aoEncer
         {v.status !== 'livre' && (
           <View style={{ alignItems: 'flex-end' }}>
             <Text style={s.relogio}>{fmtTempo(ms)}</Text>
-            <Text style={s.valorAoVivo}>{brl(calcValor(ms, preco))}</Text>
+            <Text style={s.valorAoVivo}>{brl(valorACobrar(v, agora, preco))}</Text>
           </View>
         )}
       </View>
@@ -107,6 +143,11 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
   const [lote, setLote] = useState([]);
   const leuQRRef = useRef(false);
 
+  // Escolha de cobrança por id: { [id]: 'integral' | 'corrido' }
+  const [modoCobranca, setModoCobranca] = useState({});
+  // Id do brinquedo aguardando decisão de cobrança antecipada
+  const [decidindoId, setDecidindoId] = useState(null);
+
   const { itens } = brinq;
   const preco = config.precoMinuto;
   const ativos = ordenar(itens.filter((v) => v.status !== 'livre'));
@@ -116,7 +157,10 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
   const achados = numero.trim() ? brinq.buscarPorNumero(numero) : [];
 
   const noLote = lote.map((id) => itens.find((v) => v.id === id)).filter(Boolean);
-  const totalLote = noLote.reduce((t, v) => t + calcValor(decorrido(v, agora), preco), 0);
+  const totalLote = noLote.reduce((t, v) => {
+    const modo = modoCobranca[v.id];
+    return t + valorACobrar(v, agora, preco, modo);
+  }, 0);
 
   const achadosEnc = numeroEnc.trim()
     ? brinq.buscarPorNumero(numeroEnc).filter(
@@ -168,6 +212,10 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
 
   const aoEncerrar = (v) => {
     if (v && (v.status === 'rodando' || v.status === 'pausado')) {
+      if (precisaEscolherCobranca(v, agora)) {
+        setDecidindoId(v.id);
+        return;
+      }
       setLote([v.id]);
       return;
     }
@@ -185,8 +233,22 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
       Alert.alert('Já adicionado', 'Este brinquedo já está na lista.');
       return;
     }
+    if (precisaEscolherCobranca(v, agora)) {
+      setDecidindoId(v.id);
+      return;
+    }
     setLote((l) => [...l, v.id]);
   };
+
+  const escolherModoCobranca = (modo) => {
+    const id = decidindoId;
+    if (!id) return;
+    setModoCobranca((m) => ({ ...m, [id]: modo }));
+    setDecidindoId(null);
+    setLote((l) => (l.includes(id) ? l : [...l, id]));
+  };
+
+  const cancelarDecisao = () => setDecidindoId(null);
 
   const aoLerQREncerrar = (texto) => {
     leuQRRef.current = true;
@@ -215,8 +277,13 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
 
   const encerrarLote = async () => {
     const feitos = [];
-    for (const v of noLote) if (await brinq.finalizar(v)) feitos.push(v);
+    for (const v of noLote) {
+      const modo = modoCobranca[v.id];
+      // Repassa a forma de cobrança para o brinq.finalizar (se suportar)
+      if (await brinq.finalizar(v, { modoCobranca: modo, preco, agora })) feitos.push(v);
+    }
     setLote([]);
+    setModoCobranca({});
     if (feitos.length) setCobrancaId(feitos[0].id);
   };
 
@@ -236,6 +303,8 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
       <Text style={e.tempoValor}>{brl(calcValor(min * 60000, preco))}</Text>
     </TouchableOpacity>
   );
+
+  const decidindo = itens.find((v) => v.id === decidindoId);
 
   return (
     <>
@@ -279,6 +348,52 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
         visivel={lendoEnc} titulo="Aponte para o QR Code do brinquedo a encerrar"
         onLido={aoLerQREncerrar} onFechar={aoFecharCameraEnc}
       />
+
+      {/* Modal de escolha de cobrança antecipada */}
+      <Modal transparent animationType="slide" visible={!!decidindo} onRequestClose={cancelarDecisao}>
+        <View style={s.fundoModal}>
+          <View style={s.modal}>
+            <ScrollView contentContainerStyle={PAD_JANELA}>
+              <Text style={[s.modalTitulo, { marginBottom: 6 }]}>Encerramento antecipado</Text>
+              {decidindo && (
+                <Text style={[s.sub2, { marginBottom: 16 }]}>
+                  {rotuloBrinquedo(decidindo)} · {fmtTempo(decorrido(decidindo, agora))} corridos de {decidindo.limite} min
+                </Text>
+              )}
+
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={[e.opcaoCobranca, { borderColor: cor.azul }]}
+                onPress={() => escolherModoCobranca('integral')}>
+                <MaterialCommunityIcons name="cash-multiple" size={28} color={cor.azul} />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={e.opcaoTitulo}>Cobrar valor integral</Text>
+                  <Text style={e.opcaoSub}>
+                    {decidindo ? brl(calcValor(decidindo.limite * 60000, preco)) : ''} · tempo contratado
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={[e.opcaoCobranca, { borderColor: cor.verde, marginTop: 10 }]}
+                onPress={() => escolherModoCobranca('corrido')}>
+                <MaterialCommunityIcons name="timer-sand" size={28} color={cor.verde} />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={e.opcaoTitulo}>Cobrar só o tempo corrido</Text>
+                  <Text style={e.opcaoSub}>
+                    {decidindo ? brl(calcValor(decorrido(decidindo, agora), preco)) : ''} · minutos usados
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={cancelarDecisao}>
+                <Text style={s.link}>Cancelar</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       <Modal transparent animationType="slide" visible={!!escolhendo} onRequestClose={fecharEscolha}>
         <View style={s.fundoModal}>
@@ -332,7 +447,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
           <ScrollView style={s.modal} contentContainerStyle={PAD_JANELA} keyboardShouldPersistTaps="handled">
             <Text style={s.modalTitulo}>Encerrar: digite o número</Text>
             <TextInput
-              style={[s.input, { fontSize: 24, fontWeight: '700', marginTop: 12 }]}
+              style={[s.input, { fontSize: 24, fontWeight: '700', marginTop: 12, color: '#000000' }]}
               placeholder="Ex.: 5" value={numeroEnc} onChangeText={setNumeroEnc} autoFocus autoCapitalize="characters"
             />
             {achadosEnc.map((v) => {
@@ -344,7 +459,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
                     <Text style={s.tipo}>{rotuloBrinquedo(v)}{v.cor ? ` · ${v.cor}` : ''}</Text>
                     <Text style={s.sub2}>{STATUS[v.status]} · {fmtTempo(ms)}</Text>
                   </View>
-                  <Text style={s.valorAoVivo}>{brl(calcValor(ms, preco))}</Text>
+                  <Text style={s.valorAoVivo}>{brl(valorACobrar(v, agora, preco))}</Text>
                 </TouchableOpacity>
               );
             })}
@@ -361,8 +476,8 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
 
       <Modal
         transparent animationType="slide"
-        visible={noLote.length > 0 && !lendoEnc && !digEnc}
-        onRequestClose={() => setLote([])}>
+        visible={noLote.length > 0 && !lendoEnc && !digEnc && !decidindo}
+        onRequestClose={() => { setLote([]); setModoCobranca({}); }}>
         <View style={s.fundoModal}>
           <View style={[s.modal, { maxHeight: '94%' }]}>
             <ScrollView contentContainerStyle={PAD_JANELA}>
@@ -372,6 +487,8 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
 
               {noLote.map((v) => {
                 const ms = decorrido(v, agora);
+                const modo = modoCobranca[v.id];
+                const valor = valorACobrar(v, agora, preco, modo);
                 return (
                   <View key={v.id} style={e.achado}>
                     <MaterialCommunityIcons name={iconeDe(v)} size={28} color={cor.tinta} />
@@ -380,8 +497,19 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
                       <Text style={s.sub2}>
                         Tempo corrido: {fmtTempo(ms)}{v.limite ? ` (definido: ${v.limite} min)` : ' (tempo livre)'}
                       </Text>
+                      {v.limite && (
+                        <Text style={[e.restante, { color: cor.suave }]}>
+                          {modo === 'integral'
+                            ? 'Cobrança: valor integral'
+                            : modo === 'corrido'
+                            ? 'Cobrança: tempo corrido'
+                            : ms <= v.limite * 60000 + TOLERANCIA_MIN * 60000
+                            ? 'Cobrança: valor integral (dentro da tolerância)'
+                            : 'Cobrança: integral + excedente proporcional'}
+                        </Text>
+                      )}
                     </View>
-                    <Text style={s.valorAoVivo}>{brl(calcValor(ms, preco))}</Text>
+                    <Text style={s.valorAoVivo}>{brl(valor)}</Text>
                   </View>
                 );
               })}
@@ -395,7 +523,9 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
               <TouchableOpacity onPress={abrirDigitarEnc}>
                 <Text style={s.link}>Juntar digitando o número</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => setLote([])}><Text style={s.link}>Cancelar</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => { setLote([]); setModoCobranca({}); }}>
+                <Text style={s.link}>Cancelar</Text>
+              </TouchableOpacity>
             </ScrollView>
           </View>
         </View>
@@ -424,7 +554,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
           <ScrollView style={s.modal} contentContainerStyle={PAD_JANELA} keyboardShouldPersistTaps="handled">
             <Text style={s.modalTitulo}>Digitar o número</Text>
             <TextInput
-              style={[s.input, { fontSize: 24, fontWeight: '700', marginTop: 12 }]}
+              style={[s.input, { fontSize: 24, fontWeight: '700', marginTop: 12, color: '#000000' }]}
               placeholder="Ex.: 5" value={numero} onChangeText={setNumero} autoFocus autoCapitalize="characters"
             />
             {achados.map((v) => (
@@ -456,6 +586,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
             brinq.liberar(lista.map((v) => v.id), h);
             limparLimites(lista.map((v) => v.id));
             setCobrancaId(null);
+            setModoCobranca({});
           }}
         />
       )}
@@ -507,4 +638,13 @@ const e = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16,
   },
   botaoSeguirTxt: { color: '#ffffff', fontSize: 17, fontWeight: '800' },
+
+  // Novos estilos para o modal de escolha de cobrança
+  opcaoCobranca: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: cor.fundo, borderRadius: 12,
+    padding: 14, borderWidth: 2,
+  },
+  opcaoTitulo: { fontSize: 16, fontWeight: '800', color: cor.tinta },
+  opcaoSub: { fontSize: 12, color: cor.suave, marginTop: 2 },
 });

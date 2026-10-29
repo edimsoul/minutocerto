@@ -1,18 +1,20 @@
-// Comunicação com o servidor. Cada celular tem seu próprio deviceId.
-// A conexão com o Mercado Pago é feita pelo login no navegador (OAuth): o servidor guarda a
-// autorização deste celular, e o app não precisa lidar com senha nem token.
 import { Linking } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import * as Crypto from 'expo-crypto';
 
-// >>> PREENCHA estes dois valores <<<
-export const SERVIDOR = 'https://minutoseguro-server.onrender.com'; // sem barra no final
-export const APP_KEY = 'minuto2026chaveapp'; // igual à APP_KEY do Render (Environment)
+export const SERVIDOR = 'https://minutoseguro-server.onrender.com';
+export const APP_KEY = 'minuto2026chaveapp'; // precisa ser igual ao APP_KEY do servidor
 
-const ROTA_CONECTAR = '/mp/conectar';       // responde { url: 'https://auth.mercadopago...' }
-const ROTA_DESCONECTAR = '/mp/desconectar'; // apaga a conta conectada deste celular
-const ROTA_STATUS = '/mp/status';           // responde { conectado: true/false, mp_user_id, aviso }
-const ROTA_PLANO = '/mp/plano';             // responde { emTeste, diasRestantes, taxaPercentual, aviso }
+export const URL_PRIVACIDADE = `${SERVIDOR}/privacidade`;
+export const URL_TERMOS = `${SERVIDOR}/termos`;
+export const VERSAO_TERMOS = '2026-10-21';
+
+const ROTA_CONECTAR = '/mp/conectar';
+const ROTA_DESCONECTAR = '/mp/desconectar';
+const ROTA_STATUS = '/mp/status';
+const ROTA_PLANO = '/mp/plano';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function configuracaoPendente() {
   return (
@@ -23,36 +25,101 @@ export function configuracaoPendente() {
   );
 }
 
-// identificador único deste celular (criado uma vez e guardado no cofre)
-export async function obterDeviceId() {
+/* ── identidade do aparelho: id aleatório + segredo emitido pelo servidor ── */
+let identidade = null;
+let emAndamento = null;
+
+async function pedirRegistro(id) {
   try {
-    let id = await SecureStore.getItemAsync('mc_device');
-    if (!id) {
-      id = Crypto.randomUUID();
-      await SecureStore.setItemAsync('mc_device', id);
-    }
-    return id;
+    const r = await fetch(`${SERVIDOR}/registrar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-app-key': APP_KEY },
+      body: JSON.stringify({ device_id: id }),
+    });
+    const j = await r.json().catch(() => ({}));
+    return { ok: r.ok, status: r.status, segredo: j.segredo, erro: j.erro };
   } catch (e) {
-    return 'sem-id';
+    return { ok: false, status: 0, erro: 'Sem conexão com o servidor.' };
   }
 }
 
-// Faz o pedido ao servidor. Em caso de erro, lança um Error com .status (ex.: 401 = APP_KEY errada).
-// Espera até 60 s, porque o servidor gratuito do Render pode estar dormindo.
-async function chamar(metodo, rota, corpo) {
-  const headers = { 'Content-Type': 'application/json', 'x-app-key': APP_KEY };
-  headers['x-device-id'] = await obterDeviceId();
+async function resolverIdentidade() {
+  for (let t = 0; t < 2; t++) {
+    let id = await SecureStore.getItemAsync('mc_device');
+    if (!UUID_RE.test(id || '')) {
+      id = Crypto.randomUUID();
+      await SecureStore.setItemAsync('mc_device', id);
+      await SecureStore.deleteItemAsync('mc_dsecret');
+    }
+    const guardado = await SecureStore.getItemAsync('mc_dsecret');
+    if (/^[a-f0-9]{64}$/.test(guardado || '')) return { id, segredo: guardado };
 
+    const r = await pedirRegistro(id);
+    if (r.ok && r.segredo) {
+      await SecureStore.setItemAsync('mc_dsecret', r.segredo);
+      return { id, segredo: r.segredo };
+    }
+    if (r.status === 409) { // o servidor já conhece este id e não temos o segredo: começa com id novo
+      await SecureStore.deleteItemAsync('mc_device');
+      continue;
+    }
+    throw new Error(r.erro || 'Não foi possível registrar o aparelho.');
+  }
+  throw new Error('Não foi possível registrar o aparelho.');
+}
+
+export async function obterIdentidade() {
+  if (identidade) return identidade;
+  if (!emAndamento) {
+    emAndamento = resolverIdentidade()
+      .then((v) => { identidade = v; return v; })
+      .finally(() => { emAndamento = null; });
+  }
+  return emAndamento;
+}
+
+// usado quando o servidor não reconhece mais o segredo deste aparelho
+export async function renovarIdentidade() {
+  identidade = null;
+  try { await SecureStore.deleteItemAsync('mc_dsecret'); } catch (e) {}
+}
+
+// chamado pelo "apagar tudo": o aparelho começa com identidade nova
+export async function esquecerIdentidade() {
+  identidade = null;
+  for (const k of ['mc_device', 'mc_dsecret']) {
+    try { await SecureStore.deleteItemAsync(k); } catch (e) {}
+  }
+}
+
+export const obterDeviceId = async () => (await obterIdentidade()).id;
+
+export async function cabecalhos(extra = {}) {
+  const { id, segredo } = await obterIdentidade();
+  return {
+    'Content-Type': 'application/json',
+    'x-app-key': APP_KEY,
+    'x-device-id': id,
+    'x-device-secret': segredo,
+    ...extra,
+  };
+}
+
+async function chamar(metodo, rota, corpo, { renovar = true } = {}) {
   const ctrl = new AbortController();
-  const limite = setTimeout(() => ctrl.abort(), 60000);
+  const limite = setTimeout(() => ctrl.abort(), 60000); // 60s: o Render pode demorar para acordar
   try {
     const r = await fetch(`${SERVIDOR}${rota}`, {
       method: metodo,
-      headers,
+      headers: await cabecalhos(),
       body: corpo ? JSON.stringify(corpo) : undefined,
       signal: ctrl.signal,
     });
     const j = await r.json().catch(() => ({}));
+    if (r.status === 401 && j.codigo === 'aparelho' && renovar) {
+      await renovarIdentidade();
+      return chamar(metodo, rota, corpo, { renovar: false });
+    }
     if (!r.ok) {
       const err = new Error(j.erro || `Erro ${r.status}`);
       err.status = r.status;
@@ -64,24 +131,27 @@ async function chamar(metodo, rota, corpo) {
   }
 }
 
-// O servidor está no ar e a chave confere? Retorna true ou lança o erro.
 export async function testarServidor() {
   if (configuracaoPendente()) throw new Error('Falta preencher SERVIDOR e APP_KEY em src/nuvem.js');
   await chamar('GET', '/saude');
   return true;
 }
 
-// Este celular já tem uma conta do Mercado Pago conectada? Retorna { conectado, mp_user_id }.
 export async function statusMercadoPago() {
   if (configuracaoPendente()) throw new Error('Falta preencher SERVIDOR e APP_KEY em src/nuvem.js');
   const j = await chamar('GET', ROTA_STATUS);
-  return { conectado: !!j.conectado, mp_user_id: j.mp_user_id };
+  return {
+    conectado: !!j.conectado,
+    mp_user_id: j.mp_user_id,
+    primeiro_nome: j.primeiro_nome,
+    nome_completo: j.nome_completo,
+    nickname: j.nickname,
+    email: j.email,
+  };
 }
 
-// Teste grátis: { emTeste, diasRestantes, taxaPercentual, aviso }
 export const planoMP = () => chamar('GET', ROTA_PLANO);
 
-// Pede ao servidor o endereço de autorização (vale 10 minutos).
 async function pedirUrlDeConexao() {
   if (configuracaoPendente()) throw new Error('Falta preencher SERVIDOR e APP_KEY em src/nuvem.js');
   const j = await chamar('POST', ROTA_CONECTAR, {});
@@ -90,24 +160,22 @@ async function pedirUrlDeConexao() {
   return url;
 }
 
-// Pede o endereço e abre no navegador.
-// Depois de autorizar, o usuário volta ao app e a tela confere de novo.
 export async function conectarMercadoPago() {
   const url = await pedirUrlDeConexao();
   await Linking.openURL(url);
   return true;
 }
 
-// Só devolve o endereço, sem abrir: serve para compartilhar o link (WhatsApp, aba anônima, celular do cliente).
 export const urlConexaoMercadoPago = () => pedirUrlDeConexao();
 
-// Desconecta a conta do Mercado Pago deste celular (o histórico de pagamentos continua).
 export async function desconectarMercadoPago() {
   if (configuracaoPendente()) throw new Error('Falta preencher SERVIDOR e APP_KEY em src/nuvem.js');
   await chamar('POST', ROTA_DESCONECTAR, {});
   return true;
 }
 
-// cria uma cobrança Pix; a resposta traz { id, status, taxa, copiaECola, qrBase64 }
 export const criarPix = (valor, descricao) => chamar('POST', '/mp/pix', { valor, descricao });
 export const statusPix = (id) => chamar('GET', `/mp/pix/${id}`);
+
+// Exclui os dados deste aparelho no servidor (LGPD). Não tenta recriar identidade se ela já não existe.
+export const excluirMeusDados = () => chamar('DELETE', '/meus-dados', undefined, { renovar: false });

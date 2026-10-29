@@ -7,13 +7,19 @@ import { s } from '../estilos';
 import { cor, LOGO } from '../tema';
 import { brl, calcValor, fmtTempoTexto } from '../util';
 
+// Formata centavos inteiros como 1.234,56 (a vírgula separa os centavos)
+const fmtCent = (c) => {
+  const [i, d] = (c / 100).toFixed(2).split('.');
+  return i.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + d;
+};
+
 // Cobrança compartilhada (dinheiro com troco, Pix, juntar itens, encerrar sem cobrança).
 // Não conhece brinquedos nem pula-pula: recebe os itens, o preço e como chamar cada item.
 // O Pix é criado pelo SERVIDOR, usando a conta Mercado Pago conectada no menu (não precisa de token no app).
 export default function Cobranca({ principal, itens, preco, rotuloDe, onFinalizarOutro, onFechar, onPago }) {
   const [extras, setExtras] = useState([]);
   const [modo, setModo] = useState('escolha'); // escolha | dinheiro | pix | semcobranca
-  const [recebido, setRecebido] = useState('');
+  const [centavos, setCentavos] = useState(0); // dinheiro recebido, em centavos
   const [pix, setPix] = useState(null);
   const [carregando, setCarregando] = useState(false);
   const [motivo, setMotivo] = useState('Cortesia');
@@ -50,8 +56,11 @@ export default function Cobranca({ principal, itens, preco, rotuloDe, onFinaliza
     if (await onFinalizarOutro(v)) setExtras((e) => [...e, v.id]);
   };
 
-  const rec = parseFloat(recebido.replace(',', '.')) || 0;
-  const troco = Math.round((rec - valor) * 100) / 100;
+  // dinheiro: tudo em centavos inteiros para não ter erro de arredondamento
+  const valorCent = Math.round(valor * 100);
+  const rec = centavos / 100;
+  const troco = (centavos - valorCent) / 100;
+  const pagoOk = centavos > 0 && centavos >= valorCent;
 
   const gerarPix = async () => {
     if (valor < 0.01) return Alert.alert('Valor zerado', 'Não há o que cobrar.');
@@ -140,7 +149,9 @@ export default function Cobranca({ principal, itens, preco, rotuloDe, onFinaliza
                   ))}
                 </View>
               )}
-              <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.verde }]} onPress={() => setModo('dinheiro')}>
+              <TouchableOpacity
+                style={[s.botaoGrande, { backgroundColor: cor.verde }]}
+                onPress={() => { setCentavos(valorCent); setModo('dinheiro'); }}>
                 <Text style={s.botaoGrandeTxt}>Dinheiro</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.azul }]} onPress={gerarPix} disabled={carregando}>
@@ -153,22 +164,33 @@ export default function Cobranca({ principal, itens, preco, rotuloDe, onFinaliza
 
           {modo === 'dinheiro' && (
             <>
-              <Text style={s.rotulo}>Quanto o cliente deu? (R$)</Text>
-              <TextInput
-                style={[s.input, { fontSize: 24, fontWeight: '700' }]} keyboardType="decimal-pad"
-                placeholder="0,00" value={recebido} onChangeText={setRecebido}
-              />
+              <Text style={s.rotulo}>Quanto o cliente deu?</Text>
+              <View style={est.linhaValor}>
+                <Text style={est.cifrao}>R$</Text>
+                <TextInput
+                  style={[s.input, est.inputValor]}
+                  keyboardType="number-pad"
+                  placeholder="0,00"
+                  value={centavos ? fmtCent(centavos) : ''}
+                  onChangeText={(t) =>
+                    setCentavos(Math.min(parseInt(t.replace(/\D/g, '') || '0', 10), 99999999))
+                  }
+                />
+              </View>
+              <Text style={est.dica}>Digite só os números: os 2 últimos são os centavos.</Text>
+
               <View style={[s.linhaTipos, { marginTop: 10 }]}>
-                <TouchableOpacity style={s.chip} onPress={() => setRecebido(valor.toFixed(2).replace('.', ','))}>
+                <TouchableOpacity style={s.chip} onPress={() => setCentavos(valorCent)}>
                   <Text style={s.chipTxt}>Exato</Text>
                 </TouchableOpacity>
                 {[5, 10, 20, 50, 100].map((n) => (
-                  <TouchableOpacity key={n} style={s.chip} onPress={() => setRecebido(String(n))}>
+                  <TouchableOpacity key={n} style={s.chip} onPress={() => setCentavos(n * 100)}>
                     <Text style={s.chipTxt}>R$ {n}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
-              {rec > 0 && (
+
+              {centavos > 0 && (
                 troco >= 0 ? (
                   <View style={est.caixaTroco}>
                     <Text style={est.trocoRotulo}>Troco a devolver</Text>
@@ -181,9 +203,10 @@ export default function Cobranca({ principal, itens, preco, rotuloDe, onFinaliza
                   </View>
                 )
               )}
+
               <TouchableOpacity
-                style={[s.botaoGrande, { backgroundColor: rec >= valor && rec > 0 ? cor.verde : cor.linha }]}
-                disabled={!(rec >= valor && rec > 0)}
+                style={[s.botaoGrande, { backgroundColor: pagoOk ? cor.verde : cor.linha }]}
+                disabled={!pagoOk}
                 onPress={() => onPago('Dinheiro', lista, { recebido: rec, troco: Math.max(troco, 0) })}>
                 <Text style={s.botaoGrandeTxt}>Confirmar recebimento</Text>
               </TouchableOpacity>
@@ -241,6 +264,10 @@ const est = StyleSheet.create({
   linhaJuntar: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8 },
   chipJuntar: { paddingHorizontal: 12, paddingVertical: 9, borderRadius: 18, borderWidth: 1, borderColor: cor.azul, backgroundColor: cor.branco },
   chipJuntarTxt: { color: cor.azul, fontWeight: '700' },
+  linhaValor: { flexDirection: 'row', alignItems: 'center' },
+  cifrao: { fontSize: 24, fontWeight: '700', color: cor.tinta, marginRight: 8 },
+  inputValor: { flex: 1, fontSize: 24, fontWeight: '700' },
+  dica: { fontSize: 13, color: cor.suave, marginTop: 4 },
   caixaTroco: { backgroundColor: '#E3F4EC', borderRadius: 12, padding: 14, alignItems: 'center', marginTop: 4 },
   trocoRotulo: { fontSize: 15, fontWeight: '700', color: cor.verde },
   trocoValor: { fontSize: 40, fontWeight: '900', color: cor.verde },

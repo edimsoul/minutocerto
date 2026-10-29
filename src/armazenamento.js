@@ -2,6 +2,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import * as Crypto from 'expo-crypto';
+import { esquecerIdentidade } from './nuvem';
 
 export const CHAVES = {
   brinquedos: '@mc:brinquedos',
@@ -10,6 +11,8 @@ export const CHAVES = {
   config: '@mc:config',
   migrado: '@mc:migrado',
   backupMeta: '@mc:backup_meta', // situação do backup (último envio, erros, próxima tentativa)
+  grupo: '@mc:grupo',
+  grupoFila: '@mc:grupo_fila',
 };
 const LEGADO = '@minutocerto:v1'; // formato antigo (tudo junto)
 
@@ -53,12 +56,33 @@ export const gravarCred = async (salt, senhaHash) => {
   try { await SecureStore.deleteItemAsync('mc_senha'); await SecureStore.deleteItemAsync('mc_salt'); } catch (e) {}
 };
 
+// Nomes de pessoas (pula-pula) nunca saem do celular: antes de enviar para a nuvem viram numeração.
+// Aceita "pula" como lista ou como objeto { itens: [...] } (é o que o App.js envia) e nunca lança erro.
+export const mascararPessoas = (d) => {
+  const base = d && typeof d === 'object' ? d : {};
+  const pessoas = (arr) => arr.map((p, i) => ({ ...p, numero: `Pessoa ${i + 1}` }));
+  let pula = base.pula;
+  if (Array.isArray(pula)) pula = pessoas(pula);
+  else if (pula && Array.isArray(pula.itens)) pula = { ...pula, itens: pessoas(pula.itens) };
+  let historico = base.historico;
+  if (Array.isArray(historico)) {
+    historico = historico.map((h) => (h && h.modo === 'pula'
+      ? {
+          ...h, numero: 'Pula-pula', rotulo: 'Pula-pula',
+          itens: Array.isArray(h.itens) ? h.itens.map((x) => ({ ...x, numero: 'Pula-pula', rotulo: 'Pula-pula' })) : h.itens,
+        }
+      : h));
+  }
+  return { ...base, pula, historico };
+};
+
 // apaga tudo deste celular (recuperação de senha = como reinstalar o app)
 export async function apagarTudo() {
   try { await AsyncStorage.multiRemove([...Object.values(CHAVES), LEGADO]); } catch (e) {}
-  for (const k of ['mc_cred', 'mc_senha', 'mc_salt', 'mc_token']) {
+  for (const k of ['mc_cred', 'mc_senha', 'mc_salt', 'mc_token', 'mc_email', 'mc_bio_recusou', 'mc_lock']) {
     try { await SecureStore.deleteItemAsync(k); } catch (e) {}
   }
+  await esquecerIdentidade();
 }
 
 /* ── migração: separa os dados antigos (um arquivo só) em brinquedos / pula-pula / histórico ── */

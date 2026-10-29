@@ -12,7 +12,8 @@ import { useHistorico } from './src/historico';
 import { useVoltarAndroid } from './src/hooks';
 import { useAtualizacao, AvisoBaixando } from './src/atualizacao';
 import { useSincronizacao, registrarAcesso } from './src/sincronizacao';
-import { backupSeNecessario } from './src/backup';
+import { backupSeNecessario, temToken, apagarContaBackup } from './src/backup';
+import { excluirMeusDados } from './src/nuvem';
 import { useGrupo, sairDoGrupo, estadoGrupo, sincronizarAgora } from './src/grupo';
 
 import { useBrinquedos } from './src/brinquedos/useBrinquedos';
@@ -26,17 +27,18 @@ import Menu from './src/telas/Menu';
 import Relatorio from './src/telas/Relatorio';
 import ValorMinuto from './src/telas/ValorMinuto';
 import MercadoPago from './src/telas/MercadoPago';
-import Cobranca from './src/telas/cobranca';
+import CobrancaAvulsa from './src/Cobranca/CobrancaAvulsa';
 import Acesso from './src/telas/Acesso';
 import Feedback from './src/telas/Feedback';
 import BackupTela from './src/telas/Backuptela';
 import ConectarAparelho from './src/telas/ConectarAparelho';
+import Privacidade from './src/telas/Privacidade';
 import RestaurarBackup from './src/componentes/RestaurarBackup';
 
 const TITULOS = {
   cadastro: 'Cadastro de brinquedos', relatorio: 'Relatório',
   valor: 'Valor do minuto', mp: 'Mercado Pago', acesso: 'Usuário e senha', backup: 'Backup na nuvem',
-  conectar: 'Conectar aparelho', feedback: 'Feedback',
+  conectar: 'Conectar aparelho', feedback: 'Feedback', privacidade: 'Privacidade e dados',
 };
 
 function Principal() {
@@ -111,10 +113,36 @@ function Principal() {
     setMenu(false); setTela('inicio'); setLogado(false);
   };
 
-  const resetarTudo = async () => {
-    registrarAcesso('reset_senha', null, VERSAO);
+  const limparLocal = async () => {
     await apagarTudo();
     brinq.zerar(); pula.zerar(); historico.limpar(); setConfig(CONFIG_PADRAO);
+  };
+
+  // "Apagar tudo e recomeçar" (tela de login): apaga o celular e, se der, a cópia deste aparelho na nuvem
+  const resetarTudo = async () => {
+    registrarAcesso('reset_senha', null, VERSAO);
+    try { await excluirMeusDados(); } catch (e) { /* sem internet: apaga só o celular */ }
+    await limparLocal();
+  };
+
+  // "Excluir meus dados" (tela Privacidade): só apaga o celular se a nuvem foi apagada
+  const apagarMeusDados = async (incluirBackup) => {
+    try {
+      await excluirMeusDados();
+    } catch (e) {
+      if (e.status !== 401 && e.status !== 403) return { ok: false, erro: e.message };
+    }
+    if (incluirBackup) {
+      try {
+        if (await temToken()) {
+          const r = await apagarContaBackup();
+          if (!r.ok) return { ok: false, erro: r.erro || 'Não foi possível apagar o backup do e-mail.' };
+        }
+      } catch (e) { return { ok: false, erro: 'Não foi possível apagar o backup do e-mail.' }; }
+    }
+    await limparLocal();
+    setMenu(false); setTela('inicio'); setLogado(false);
+    return { ok: true };
   };
 
   const aviso = <AvisoBaixando visivel={baixando} />;
@@ -177,7 +205,7 @@ function Principal() {
           <PulaPula pula={pula} config={config} onPagamento={historico.registrar} />
         )}
         {tela === 'inicio' && modo === 'cobranca' && (
-          <Cobranca onRegistrar={historico.registrar} />
+          <CobrancaAvulsa onRegistrar={historico.registrar} />
         )}
         {tela === 'inicio' && modo === 'veiculos' && (
           <Brinquedos brinq={brinq} config={config} onPagamento={historico.registrar} />
@@ -190,11 +218,15 @@ function Principal() {
         {tela === 'backup' && <BackupTela />}
         {tela === 'conectar' && <ConectarAparelho aoEntrar={importarDoPrincipal} />}
         {tela === 'feedback' && <Feedback />}
+        {tela === 'privacidade' && <Privacidade onApagar={apagarMeusDados} />}
       </View>
 
       {tela === 'inicio' && (
-        <View style={{ paddingVertical: 8, alignItems: 'center', borderTopWidth: 1, borderColor: cor.linha, backgroundColor: cor.branco, marginBottom: 12 }}>
+        <View style={{ paddingVertical: 8, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', borderTopWidth: 1, borderColor: cor.linha, backgroundColor: cor.branco, marginBottom: 12 }}>
           <Text style={{ fontSize: 12, color: cor.suave }}>MinutoCerto · versão {VERSAO}</Text>
+          <TouchableOpacity onPress={() => setTela('privacidade')} accessibilityRole="link" accessibilityLabel="Privacidade e dados">
+            <Text style={{ fontSize: 12, color: cor.azul, fontWeight: '700', marginLeft: 14 }}>Privacidade e dados</Text>
+          </TouchableOpacity>
         </View>
       )}
 

@@ -83,12 +83,6 @@ function Corpo({ modo, escolhido, onFechar, onModo, onIr, onSair }) {
             })}
           </View>
 
-          {escolhido && (
-            <TouchableOpacity style={e.voltar} onPress={() => setEtapa('opcoes')}>
-              <MaterialCommunityIcons name="view-grid-outline" size={20} color={cor.tinta} />
-              <Text style={e.voltarTxt}>Opções</Text>
-            </TouchableOpacity>
-          )}
           <Text style={e.versao}>Versão {VERSAO}</Text>
         </ScrollView>
       ) : (

@@ -1,4 +1,5 @@
-// Fala com /recuperacao no servidor. O e-mail fica só no cofre deste celular.
+// Fala com /recuperacao no servidor (código por e-mail). O e-mail é enviado ao servidor para
+// confirmar o código e ligar o backup; uma cópia fica também no cofre deste celular.
 import * as SecureStore from 'expo-secure-store';
 import { SERVIDOR, APP_KEY, configuracaoPendente, obterDeviceId } from './nuvem';
 
@@ -7,15 +8,17 @@ async function chamar(rota, corpo) {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), 60000);
   try {
+    let deviceId = '';
+    try { deviceId = await obterDeviceId(); } catch (e) {}
     const r = await fetch(`${SERVIDOR}/recuperacao${rota}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-app-key': APP_KEY, 'x-device-id': await obterDeviceId() },
+      headers: { 'Content-Type': 'application/json', 'x-app-key': APP_KEY, 'x-device-id': deviceId },
       body: JSON.stringify(corpo || {}),
       signal: ctl.signal,
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) return { ok: false, erro: j.erro || `Erro ${r.status}` };
-    return { ok: true, token: j.token }; // repassa o token do backup (só vem em /codigo/confirmar)
+    return { ok: true, token: j.token }; // token do backup (só vem em /codigo/confirmar)
   } catch (e) {
     return { ok: false, erro: e.name === 'AbortError'
       ? 'O servidor demorou demais. Tente de novo em um minuto.'

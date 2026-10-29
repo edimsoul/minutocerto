@@ -1,23 +1,28 @@
 import { useEffect, useRef } from 'react';
 import { AppState, Alert } from 'react-native';
 import * as Crypto from 'expo-crypto';
-import { lerJSON, salvarJSON } from './armazenamento';
-import { SERVIDOR, APP_KEY, obterDeviceId } from './nuvem';
+import { lerJSON, salvarJSON, CHAVES } from './armazenamento';
+import { SERVIDOR, cabecalhos, renovarIdentidade } from './nuvem';
 
-const CHAVE = '@mc:grupo';
 const PADRAO = { conectado: false, ultimo: 0 };
+const MAX_FILA = 200;
 
 let conectado = false;
 let desvio = 0;
 let cicloAtual = null;
-const fila = []; // ações de pagamento que não chegaram ao servidor
+let fila = []; // ações de pagamento que não chegaram ao servidor (guardadas também no celular)
 
 export const estaConectado = () => conectado;
 export const doServidor = (ms) => ms - desvio;
 export const pendente = (item) => fila.some((f) => f.item === item);
 export const sincronizarAgora = () => (cicloAtual ? cicloAtual() : undefined);
 
-async function chamar(metodo, caminho, corpo) {
+const gravarFila = () => salvarJSON(CHAVES.grupoFila, fila);
+const filaPronta = lerJSON(CHAVES.grupoFila, []).then((l) => {
+  fila = Array.isArray(l) ? [...l, ...fila].slice(-MAX_FILA) : fila;
+});
+
+async function chamar(metodo, caminho, corpo, tentativa = 0) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), 20000);
   const t0 = Date.now();
@@ -25,11 +30,15 @@ async function chamar(metodo, caminho, corpo) {
     const r = await fetch(`${SERVIDOR}/grupo${caminho}`, {
       method: metodo,
       signal: ctl.signal,
-      headers: { 'Content-Type': 'application/json', 'x-app-key': APP_KEY, 'x-device-id': await obterDeviceId() },
+      headers: await cabecalhos(),
       body: corpo ? JSON.stringify(corpo) : undefined,
     });
     const t1 = Date.now();
     const j = await r.json().catch(() => ({}));
+    if (r.status === 401 && j.codigo === 'aparelho' && tentativa === 0) {
+      await renovarIdentidade();
+      return chamar(metodo, caminho, corpo, 1);
+    }
     if (Number.isFinite(j.agora)) desvio = j.agora - Math.round((t0 + t1) / 2);
     return { ...j, status: r.status, ok: r.ok && j.ok !== false };
   } catch (e) {
@@ -42,13 +51,17 @@ async function chamar(metodo, caminho, corpo) {
   }
 }
 
-export const lerLocal = () => lerJSON(CHAVE, PADRAO);
-const gravar = async (v) => { conectado = !!v.conectado; await salvarJSON(CHAVE, v); };
+export const lerLocal = () => lerJSON(CHAVES.grupo, PADRAO);
+const gravar = async (v) => {
+  conectado = !!v.conectado;
+  await salvarJSON(CHAVES.grupo, v);
+  if (!conectado) { fila = []; await gravarFila(); }
+};
 lerLocal().then((l) => { conectado = !!l.conectado; });
 
-// tamanho: 4 ou 6 dígitos
-export async function gerarCodigo(tamanho = 6) {
-  const r = await chamar('POST', '/gerar', { tamanho: tamanho === 4 ? 4 : 6 });
+// O código tem sempre 6 dígitos (o parâmetro fica só por compatibilidade com telas antigas).
+export async function gerarCodigo() {
+  const r = await chamar('POST', '/gerar', {});
   if (r.ok) {
     const loc = await lerLocal();
     if (!loc.conectado) await gravar({ conectado: true, ultimo: r.ultimo || 0 });
@@ -70,6 +83,9 @@ export async function sairDoGrupo() {
   await gravar(PADRAO);
   return { ok: true };
 }
+
+// só o aparelho principal pode: desconecta todos os outros aparelhos do grupo
+export const removerOutrosAparelhos = () => chamar('POST', '/remover');
 
 export const estadoGrupo = (comDados = false) => chamar('GET', `/estado${comDados ? '?dados=1' : ''}`);
 
@@ -112,7 +128,12 @@ export async function executar({ item, tipo, base, dados, local, aplicar, suave 
   }
   if (r.ok) { aplicar(patchDe(tipo, r)); return true; }
   if (suave) {
-    if (!r.conflito) fila.push({ item, tipo, baseSeq: b, dados, uid: r.uid });
+    if (!r.conflito) {
+      await filaPronta;
+      fila.push({ item, tipo, baseSeq: b, dados, uid: r.uid });
+      fila = fila.slice(-MAX_FILA);
+      await gravarFila();
+    }
     local();
     return true;
   }
@@ -126,11 +147,13 @@ export async function executar({ item, tipo, base, dados, local, aplicar, suave 
 }
 
 async function esvaziarFila() {
+  await filaPronta;
+  let mudou = false;
   for (const f of [...fila]) {
     const r = await enviarEvento(f);
-    if (r.ok || r.conflito) fila.splice(fila.indexOf(f), 1);
-    else break;
+    if (r.ok || r.conflito) { fila.splice(fila.indexOf(f), 1); mudou = true; } else break;
   }
+  if (mudou) await gravarFila();
 }
 
 // consulta o servidor a cada 4 s e ao voltar para o app
