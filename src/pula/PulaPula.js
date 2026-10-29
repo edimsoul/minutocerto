@@ -273,7 +273,7 @@ export default function PulaPula({ pula, config, onPagamento }) {
             <View key={v.id} style={[s.veiculo, { borderLeftColor: corBorda, backgroundColor: fundo }]}>
               <View style={s.veiculoTopo}>
                 <View style={s.numero}>
-                  <MaterialCommunityIcons name={ICONES['Pula-pula']} size={35} color={cor.azul} />
+                  <MaterialCommunityIcons name={ICONES['Pula-pula']} size={32} color={cor.branco} />
                 </View>
                 <View style={{ flex: 1, marginLeft: 12 }}>
                   <Text style={s.tipo}>{rotuloPessoa(v)}</Text>
