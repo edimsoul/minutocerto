@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, AppState, Alert } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { s } from './src/estilos';
 import { cor, VERSAO } from './src/tema';
@@ -46,6 +47,10 @@ function Principal() {
   const [menu, setMenu] = useState(false);
   const [logado, setLogado] = useState(false);
   const [restaurando, setRestaurando] = useState(false);
+  
+  const [testeExpirado, setTesteExpirado] = useState(false);
+  const [testePronto, setTestePronto] = useState(false);
+  const [bloqueadoAdmin, setBloqueadoAdmin] = useState(false);
 
   const [config, setConfig, configPronta] = useConfig();
   const historico = useHistorico();
@@ -67,6 +72,84 @@ function Principal() {
     VERSAO,
   );
 
+  // --- LÓGICA DO TESTE DE 20 DIAS ---
+  useEffect(() => {
+    async function verificarTeste() {
+      try {
+        let dataInstalacao = await AsyncStorage.getItem('@minutocerto_data_instalacao');
+        
+        if (!dataInstalacao) {
+          dataInstalacao = new Date().toISOString();
+          await AsyncStorage.setItem('@minutocerto_data_instalacao', dataInstalacao);
+          setTimeout(() => {
+            Alert.alert("Bem-vindo ao MinutoCerto!", "Você tem 20 dias de teste grátis. Aproveite todos os recursos!");
+          }, 1000);
+        } else {
+          const hoje = new Date();
+          const inicio = new Date(dataInstalacao);
+          const diasPassados = Math.floor((hoje - inicio) / (1000 * 60 * 60 * 24));
+
+          if (diasPassados === 19) {
+            setTimeout(() => {
+              Alert.alert("Atenção: Teste acabando!", "Seu período de teste vence amanhã. Para continuar usando o app sem interrupções, entre em contato pelo WhatsApp: (85) 99953-8924.");
+            }, 1000);
+          } else if (diasPassados >= 20) {
+            setTesteExpirado(true);
+          }
+        }
+      } catch (error) {
+        console.error("Erro ao verificar o teste:", error);
+      } finally {
+        setTestePronto(true);
+      }
+    }
+    
+    verificarTeste();
+  }, []);
+
+  // --- VERIFICAR BLOQUEIO NO SERVIDOR ---
+  useEffect(() => {
+    async function checarBloqueio() {
+      if (!logado) return;
+      try {
+        // Substitua pela sua URL real do Render e sua APP_KEY
+        const URL_SERVIDOR = 'https://minutocerto.onrender.com'; 
+        const APP_KEY = 'minuto2026chaveapp';
+        
+        const deviceId = await AsyncStorage.getItem('@minutocerto_device_id');
+        const deviceSecret = await AsyncStorage.getItem('@minutocerto_device_secret');
+
+        if (!deviceId || !deviceSecret) return;
+
+        const resposta = await fetch(`${URL_SERVIDOR}/sincronizar`, {
+           method: 'POST',
+           headers: {
+             'Content-Type': 'application/json',
+             'x-app-key': APP_KEY,
+             'x-device-id': deviceId, 
+             'x-device-secret': deviceSecret
+           },
+           body: JSON.stringify({
+             dados: { 
+                usuario: config.usuario, 
+                email: config.email || 'nao_informado@email.com',
+                telefone: config.telefone || 'nao_informado',
+             },
+             versao: VERSAO
+           })
+        });
+        
+        if (resposta.status === 403) {
+           setBloqueadoAdmin(true);
+        }
+      } catch (e) {
+        console.log("Erro ao checar bloqueio", e);
+      }
+    }
+    
+    checarBloqueio();
+  }, [logado, config.usuario, config.email, config.telefone]);
+
   useEffect(() => { registrarAcesso('abriu_app', null, VERSAO); }, []);
 
   useEffect(() => {
@@ -78,7 +161,6 @@ function Principal() {
     return () => sub.remove();
   }, [logado]);
 
-  // aparelhos conectados: aplica o que veio do servidor
   useGrupo(logado && configPronta, ({ desconectado, itens, eventos }) => {
     if (desconectado) {
       Alert.alert('Desconectado', 'Este aparelho não está mais conectado ao outro.');
@@ -91,7 +173,6 @@ function Principal() {
     });
   });
 
-  // ao conectar com um código: traz brinquedos e preços do aparelho principal
   const importarDoPrincipal = async () => {
     const r = await estadoGrupo(true);
     const d = r.dados;
@@ -118,14 +199,12 @@ function Principal() {
     brinq.zerar(); pula.zerar(); historico.limpar(); setConfig(CONFIG_PADRAO);
   };
 
-  // "Apagar tudo e recomeçar" (tela de login): apaga o celular e, se der, a cópia deste aparelho na nuvem
   const resetarTudo = async () => {
     registrarAcesso('reset_senha', null, VERSAO);
-    try { await excluirMeusDados(); } catch (e) { /* sem internet: apaga só o celular */ }
+    try { await excluirMeusDados(); } catch (e) { }
     await limparLocal();
   };
 
-  // "Excluir meus dados" (tela Privacidade): só apaga o celular se a nuvem foi apagada
   const apagarMeusDados = async (incluirBackup) => {
     try {
       await excluirMeusDados();
@@ -146,9 +225,41 @@ function Principal() {
   };
 
   const aviso = <AvisoBaixando visivel={baixando} />;
-  if (!(configPronta && brinq.pronto && pula.pronto && historico.pronto)) {
+
+  // --- TELAS DE BLOQUEIO ---
+  if (testePronto && testeExpirado) {
+    return (
+      <View style={[s.centro, { padding: 24 }]}>
+        <Text style={{ fontSize: 22, fontWeight: 'bold', color: cor.tinta, textAlign: 'center', marginBottom: 16 }}>
+          Teste Expirado
+        </Text>
+        <Text style={{ fontSize: 16, color: cor.suave, textAlign: 'center', marginBottom: 24 }}>
+          Seu período de teste gratuito de 20 dias acabou. Para liberar o app novamente, entre em contato pelo WhatsApp:
+        </Text>
+        <Text style={{ fontSize: 20, fontWeight: 'bold', color: cor.azul, marginBottom: 24 }}>
+          (85) 99953-8924
+        </Text>
+      </View>
+    );
+  }
+
+  if (bloqueadoAdmin) {
+    return (
+      <View style={[s.centro, { padding: 24 }]}>
+        <Text style={{ fontSize: 22, fontWeight: 'bold', color: 'red', textAlign: 'center', marginBottom: 16 }}>
+          Acesso Bloqueado
+        </Text>
+        <Text style={{ fontSize: 16, color: cor.suave, textAlign: 'center', marginBottom: 24 }}>
+          Sua conta foi bloqueada pelo administrador. Entre em contato com o suporte.
+        </Text>
+      </View>
+    );
+  }
+
+  if (!(configPronta && brinq.pronto && pula.pronto && historico.pronto && testePronto)) {
     return <View style={s.centro}><ActivityIndicator />{aviso}</View>;
   }
+
   if (!logado) {
     return (
       <>
