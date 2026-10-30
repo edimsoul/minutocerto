@@ -19,7 +19,7 @@ const STATE_SECRET = (process.env.STATE_SECRET || '').trim();
 const PUBLIC_URL = (PUBLIC_URL_BRUTA || '').trim().replace(/\/+$/, '');
 
 // ---------- regras comerciais ----------
-const TAXA = 0.01;
+const TAXA = 0.00;
 const AVISO_TAXA = `Será cobrado ${String(TAXA * 100).replace('.', ',')}% sobre cada Pix, para manutenção do sistema.`;
 const RETENCAO_ACESSOS_DIAS = 180;
 
@@ -610,36 +610,30 @@ app.get('/api/monitor/pagamentos', limiteIp('mon', 60), requerAdmin, rota(async 
   res.json(exige(await db.from('pagamentos').select('*').order('criado_em', { ascending: false }).limit(limiteConsulta(req))));
 }));
 
-// --- ROTA ATUALIZADA PARA TRAZER DADOS DO CLIENTE E BLOQUEIO ---
+// --- APARELHOS: duas consultas separadas (sem join, não depende de chave estrangeira) ---
 app.get('/api/monitor/aparelhos', limiteIp('mon', 60), requerAdmin, rota(async (req, res) => {
-  const { data, error } = await db
+  const sinc = exige(await db
     .from('sincronizacoes')
-    .select(`
-      device_id,
-      versao,
-      atualizado_em,
-      dados,
-      aparelhos (
-        bloqueado
-      )
-    `)
+    .select('device_id, versao, atualizado_em, dados')
     .order('atualizado_em', { ascending: false })
-    .limit(limiteConsulta(req));
+    .limit(limiteConsulta(req)));
 
-  if (error) throw new Error(error.message);
-  
-  const resultado = data.map(item => ({
+  const ids = sinc.map((s) => s.device_id);
+  const aps = ids.length
+    ? exige(await db.from('aparelhos').select('device_id, bloqueado').in('device_id', ids))
+    : [];
+  const bloqueio = new Map(aps.map((a) => [a.device_id, a.bloqueado]));
+
+  res.json(sinc.map((item) => ({
     device_id: item.device_id,
     versao: item.versao,
     atualizado_em: item.atualizado_em,
-    bloqueado: item.aparelhos?.bloqueado || false,
+    bloqueado: bloqueio.get(item.device_id) || false,
     usuario: item.dados?.usuario || 'Sem nome',
     email: item.dados?.email || 'Sem email',
     telefone: item.dados?.telefone || 'Sem telefone',
-    dados: item.dados
-  }));
-
-  res.json(resultado);
+    dados: item.dados,
+  })));
 }));
 
 app.get('/health', (req, res) => res.json({ ok: true }));
