@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, AppState, Alert } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,6 +15,7 @@ import { useAtualizacao, AvisoBaixando } from './src/atualizacao';
 import { useSincronizacao, registrarAcesso } from './src/sincronizacao';
 import { backupSeNecessario, temToken, apagarContaBackup } from './src/backup';
 import { excluirMeusDados } from './src/nuvem';
+import { lerEmailCadastrado } from './src/recuperacao';
 import { useGrupo, sairDoGrupo, estadoGrupo, sincronizarAgora } from './src/grupo';
 
 import { useBrinquedos } from './src/brinquedos/useBrinquedos';
@@ -36,6 +37,9 @@ import ConectarAparelho from './src/telas/ConectarAparelho';
 import Privacidade from './src/telas/Privacidade';
 import RestaurarBackup from './src/componentes/RestaurarBackup';
 
+const URL_SERVIDOR = 'https://minutocerto.onrender.com';
+const APP_KEY = 'minuto2026chaveapp';
+
 const TITULOS = {
   cadastro: 'Cadastro de brinquedos', relatorio: 'Relatório',
   valor: 'Valor do minuto', mp: 'Mercado Pago', acesso: 'Usuário e senha', backup: 'Backup na nuvem',
@@ -47,10 +51,11 @@ function Principal() {
   const [menu, setMenu] = useState(false);
   const [logado, setLogado] = useState(false);
   const [restaurando, setRestaurando] = useState(false);
-  
-  const [testeExpirado, setTesteExpirado] = useState(false);
-  const [testePronto, setTestePronto] = useState(false);
+
   const [bloqueadoAdmin, setBloqueadoAdmin] = useState(false);
+  const [motivo, setMotivo] = useState('bloqueado'); // 'bloqueado' ou 'teste_expirado'
+  const [verificando, setVerificando] = useState(false);
+  const avisouFimTeste = useRef(false);
 
   const [config, setConfig, configPronta] = useConfig();
   const historico = useHistorico();
@@ -72,83 +77,104 @@ function Principal() {
     VERSAO,
   );
 
-  // --- LÓGICA DO TESTE DE 20 DIAS ---
+  // Quem se cadastrou antes desta versão tem o e-mail guardado só no cofre do celular.
+  // Copia para o config, para ele ser sincronizado e aparecer no /monitor.
   useEffect(() => {
-    async function verificarTeste() {
+    if (!configPronta || config.email) return;
+    (async () => {
       try {
-        let dataInstalacao = await AsyncStorage.getItem('@minutocerto_data_instalacao');
-        
-        if (!dataInstalacao) {
-          dataInstalacao = new Date().toISOString();
-          await AsyncStorage.setItem('@minutocerto_data_instalacao', dataInstalacao);
-          setTimeout(() => {
-            Alert.alert("Bem-vindo ao MinutoCerto!", "Você tem 20 dias de teste grátis. Aproveite todos os recursos!");
-          }, 1000);
-        } else {
-          const hoje = new Date();
-          const inicio = new Date(dataInstalacao);
-          const diasPassados = Math.floor((hoje - inicio) / (1000 * 60 * 60 * 24));
+        const em = await lerEmailCadastrado();
+        if (em) setConfig((c) => ({ ...c, email: em }));
+      } catch (e) { /* sem problema */ }
+    })();
+  }, [configPronta, config.email]);
 
-          if (diasPassados === 19) {
-            setTimeout(() => {
-              Alert.alert("Atenção: Teste acabando!", "Seu período de teste vence amanhã. Para continuar usando o app sem interrupções, entre em contato pelo WhatsApp: (85) 99953-8924.");
-            }, 1000);
-          } else if (diasPassados >= 20) {
-            setTesteExpirado(true);
-          }
+  // --- BOAS-VINDAS (só um aviso; quem controla o teste de 20 dias é o servidor) ---
+  useEffect(() => {
+    (async () => {
+      try {
+        const ja = await AsyncStorage.getItem('@minutocerto_boas_vindas');
+        if (!ja) {
+          await AsyncStorage.setItem('@minutocerto_boas_vindas', '1');
+          setTimeout(() => {
+            Alert.alert('Bem-vindo ao MinutoCerto!', 'Você tem 20 dias de teste grátis. Aproveite todos os recursos!');
+          }, 1000);
         }
-      } catch (error) {
-        console.error("Erro ao verificar o teste:", error);
-      } finally {
-        setTestePronto(true);
-      }
-    }
-    
-    verificarTeste();
+      } catch (e) { /* sem problema */ }
+    })();
   }, []);
 
-  // --- VERIFICAR BLOQUEIO NO SERVIDOR ---
-  useEffect(() => {
-    async function checarBloqueio() {
-      if (!logado) return;
-      try {
-        // Substitua pela sua URL real do Render e sua APP_KEY
-        const URL_SERVIDOR = 'https://minutocerto.onrender.com'; 
-        const APP_KEY = 'minuto2026chaveapp';
-        
-        const deviceId = await AsyncStorage.getItem('@minutocerto_device_id');
-        const deviceSecret = await AsyncStorage.getItem('@minutocerto_device_secret');
+  // --- VERIFICAR BLOQUEIO / TESTE NO SERVIDOR ---
+  // Usa uma consulta (GET) que não altera nenhum dado. O servidor responde 403 se o aparelho
+  // estiver bloqueado ou com o teste de 20 dias vencido. Nada é apagado do aparelho: quando
+  // você desbloqueia no /monitor, o acesso volta.
+  // Retorna true (bloqueado), false (liberado) ou null (não foi possível verificar).
+  const checarBloqueio = async () => {
+    try {
+      const deviceId = await AsyncStorage.getItem('@minutocerto_device_id');
+      const deviceSecret = await AsyncStorage.getItem('@minutocerto_device_secret');
+      if (!deviceId || !deviceSecret) return null;
 
-        if (!deviceId || !deviceSecret) return;
+      const resposta = await fetch(`${URL_SERVIDOR}/mp/plano`, {
+        method: 'GET',
+        headers: {
+          'x-app-key': APP_KEY,
+          'x-device-id': deviceId,
+          'x-device-secret': deviceSecret,
+        },
+      });
 
-        const resposta = await fetch(`${URL_SERVIDOR}/sincronizar`, {
-           method: 'POST',
-           headers: {
-             'Content-Type': 'application/json',
-             'x-app-key': APP_KEY,
-             'x-device-id': deviceId, 
-             'x-device-secret': deviceSecret
-           },
-           body: JSON.stringify({
-             dados: { 
-                usuario: config.usuario, 
-                email: config.email || 'nao_informado@email.com',
-                telefone: config.telefone || 'nao_informado',
-             },
-             versao: VERSAO
-           })
-        });
-        
-        if (resposta.status === 403) {
-           setBloqueadoAdmin(true);
-        }
-      } catch (e) {
-        console.log("Erro ao checar bloqueio", e);
+      if (resposta.status === 403) {
+        const corpo = await resposta.json().catch(() => ({}));
+        setMotivo(corpo.codigo === 'teste_expirado' ? 'teste_expirado' : 'bloqueado');
+        setBloqueadoAdmin(true);
+        await AsyncStorage.setItem('@minutocerto_bloqueado', corpo.codigo || 'bloqueado');
+        return true;
       }
+      if (resposta.ok) {
+        const corpo = await resposta.json().catch(() => ({}));
+        setBloqueadoAdmin(false);
+        await AsyncStorage.removeItem('@minutocerto_bloqueado');
+        const teste = corpo.teste;
+        if (teste && !teste.liberado && teste.restantes <= 1 && !avisouFimTeste.current) {
+          avisouFimTeste.current = true;
+          Alert.alert('Atenção: teste acabando!', 'Seu período de teste vence em breve. Para continuar usando o app sem interrupções, entre em contato pelo WhatsApp: (85) 99953-8924.');
+        }
+        return false;
+      }
+      return null;
+    } catch (e) {
+      console.log('Erro ao checar bloqueio', e);
+      // Sem internet: se já estava bloqueado da última vez, continua bloqueado
+      try {
+        const marca = await AsyncStorage.getItem('@minutocerto_bloqueado');
+        if (marca) {
+          setMotivo(marca === 'teste_expirado' ? 'teste_expirado' : 'bloqueado');
+          setBloqueadoAdmin(true);
+          return true;
+        }
+      } catch (e2) { /* ignora */ }
+      return null;
     }
-    
+  };
+
+  // Ao entrar (login) e sempre que o app volta para a tela
+  useEffect(() => {
+    if (!logado) return undefined;
     checarBloqueio();
-  }, [logado, config.usuario, config.email, config.telefone]);
+    const sub = AppState.addEventListener('change', (estado) => {
+      if (estado === 'active') checarBloqueio();
+    });
+    return () => sub.remove();
+  }, [logado]);
+
+  const verificarDeNovo = async () => {
+    setVerificando(true);
+    const r = await checarBloqueio();
+    setVerificando(false);
+    if (r === true) Alert.alert('Ainda bloqueado', 'Seu acesso ainda não foi liberado. Entre em contato com o responsável.');
+    else if (r === null) Alert.alert('Sem conexão', 'Não foi possível verificar agora. Tente novamente.');
+  };
 
   useEffect(() => { registrarAcesso('abriu_app', null, VERSAO); }, []);
 
@@ -226,37 +252,37 @@ function Principal() {
 
   const aviso = <AvisoBaixando visivel={baixando} />;
 
-  // --- TELAS DE BLOQUEIO ---
-  if (testePronto && testeExpirado) {
-    return (
-      <View style={[s.centro, { padding: 24 }]}>
-        <Text style={{ fontSize: 22, fontWeight: 'bold', color: cor.tinta, textAlign: 'center', marginBottom: 16 }}>
-          Teste Expirado
-        </Text>
-        <Text style={{ fontSize: 16, color: cor.suave, textAlign: 'center', marginBottom: 24 }}>
-          Seu período de teste gratuito de 20 dias acabou. Para liberar o app novamente, entre em contato pelo WhatsApp:
-        </Text>
-        <Text style={{ fontSize: 20, fontWeight: 'bold', color: cor.azul, marginBottom: 24 }}>
-          (85) 99953-8924
-        </Text>
-      </View>
-    );
-  }
-
+  // --- TELA DE BLOQUEIO ---
   if (bloqueadoAdmin) {
     return (
       <View style={[s.centro, { padding: 24 }]}>
         <Text style={{ fontSize: 22, fontWeight: 'bold', color: 'red', textAlign: 'center', marginBottom: 16 }}>
-          Acesso Bloqueado
+          {motivo === 'teste_expirado' ? 'Teste expirado' : 'Acesso bloqueado'}
         </Text>
-        <Text style={{ fontSize: 16, color: cor.suave, textAlign: 'center', marginBottom: 24 }}>
-          Sua conta foi bloqueada pelo administrador. Entre em contato com o suporte.
+        <Text style={{ fontSize: 16, color: cor.suave, textAlign: 'center', marginBottom: 8 }}>
+          {motivo === 'teste_expirado'
+            ? 'Seu período de teste gratuito de 20 dias acabou. Para liberar o app, entre em contato com o responsável pelo WhatsApp:'
+            : 'O acesso deste aparelho está bloqueado. Entre em contato com o responsável pelo WhatsApp:'}
         </Text>
+        <Text style={{ fontSize: 20, fontWeight: 'bold', color: cor.azul, marginBottom: 16 }}>
+          (85) 99953-8924
+        </Text>
+        <Text style={{ fontSize: 13, color: cor.suave, textAlign: 'center', marginBottom: 24 }}>
+          Seus dados estão guardados e voltam assim que o acesso for liberado.
+        </Text>
+        <TouchableOpacity
+          disabled={verificando}
+          onPress={verificarDeNovo}
+          style={{ backgroundColor: cor.tinta, borderRadius: 10, paddingHorizontal: 22, paddingVertical: 12 }}>
+          <Text style={{ color: cor.branco, fontWeight: '800', fontSize: 15 }}>
+            {verificando ? 'Verificando...' : 'Verificar novamente'}
+          </Text>
+        </TouchableOpacity>
       </View>
     );
   }
 
-  if (!(configPronta && brinq.pronto && pula.pronto && historico.pronto && testePronto)) {
+  if (!(configPronta && brinq.pronto && pula.pronto && historico.pronto)) {
     return <View style={s.centro}><ActivityIndicator />{aviso}</View>;
   }
 

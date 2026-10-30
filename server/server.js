@@ -19,9 +19,20 @@ const STATE_SECRET = (process.env.STATE_SECRET || '').trim();
 const PUBLIC_URL = (PUBLIC_URL_BRUTA || '').trim().replace(/\/+$/, '');
 
 // ---------- regras comerciais ----------
-const TAXA = 0.00;
+const TAXA = 0.01;
 const AVISO_TAXA = `Será cobrado ${String(TAXA * 100).replace('.', ',')}% sobre cada Pix, para manutenção do sistema.`;
 const RETENCAO_ACESSOS_DIAS = 180;
+const TESTE_DIAS = 20;
+const DIA_MS = 86400000;
+
+// Teste grátis controlado pelo servidor: conta a partir de aparelhos.criado_em.
+// Quem foi liberado no /monitor (liberado = true) não expira mais.
+function infoTeste(a) {
+  const liberado = !!a?.liberado;
+  const fim = a?.criado_em ? new Date(a.criado_em).getTime() + TESTE_DIAS * DIA_MS : null;
+  const restantes = fim ? Math.max(0, Math.ceil((fim - Date.now()) / DIA_MS)) : TESTE_DIAS;
+  return { dias: TESTE_DIAS, restantes, liberado, vencido: !liberado && !!fim && Date.now() > fim };
+}
 
 for (const nome of ['SUPABASE_URL', 'SUPABASE_SERVICE_KEY', 'APP_KEY', 'ADMIN_TOKEN', 'STATE_SECRET', 'MP_WEBHOOK_SECRET']) {
   if (!process.env[nome]) console.warn(`[config] Falta a variável ${nome}`);
@@ -122,7 +133,7 @@ async function requerAparelho(req, res, next) {
     }
     let c = cacheAp.get(id);
     if (!c || Date.now() > c.ate) {
-      const r = await db.from('aparelhos').select('segredo_hash, bloqueado').eq('device_id', id).maybeSingle();
+      const r = await db.from('aparelhos').select('segredo_hash, bloqueado, liberado, criado_em').eq('device_id', id).maybeSingle();
       if (r.error) throw new Error(r.error.message);
       c = { dados: r.data, ate: Date.now() + 60000 };
       cacheAp.set(id, c);
@@ -131,7 +142,14 @@ async function requerAparelho(req, res, next) {
     if (!c.dados || !igual(sha256(seg), c.dados.segredo_hash)) {
       return res.status(401).json({ erro: 'Aparelho não autorizado.', codigo: 'aparelho' });
     }
-    if (c.dados.bloqueado) return res.status(403).json({ erro: 'Este aparelho foi bloqueado. Fale com o suporte.' });
+    if (c.dados.bloqueado) {
+      return res.status(403).json({ erro: 'Este aparelho foi bloqueado. Fale com o suporte.', codigo: 'bloqueado' });
+    }
+    const teste = infoTeste(c.dados);
+    if (teste.vencido) {
+      return res.status(403).json({ erro: 'O teste gratuito de 20 dias acabou. Fale com o suporte.', codigo: 'teste_expirado' });
+    }
+    req.teste = teste;
     req.deviceId = id;
     next();
   } catch (e) {
@@ -345,7 +363,7 @@ app.get('/mp/pix/:id', ...doAparelho, limite(120), rota(async (req, res) => {
 }));
 
 app.get('/mp/plano', ...doAparelho, limite(60), rota(async (req, res) => {
-  res.json(plano());
+  res.json({ ...plano(), teste: req.teste });
 }));
 
 app.get('/mp/status', ...doAparelho, limite(60), rota(async (req, res) => {
@@ -595,7 +613,11 @@ app.get('/api/monitor/clientes', limiteIp('mon', 60), requerAdmin, rota(async (r
 app.post('/api/monitor/bloquear', limiteIp('mon', 30), requerAdmin, rota(async (req, res) => {
   const id = req.body?.device_id;
   if (!idValido(id)) throw falha(400, 'device_id inválido.');
-  exige(await db.from('aparelhos').update({ bloqueado: !!req.body?.bloquear }).eq('device_id', id));
+  const bloquear = !!req.body?.bloquear;
+  // Desbloquear = liberar de vez (também encerra o controle do teste de 20 dias)
+  exige(await db.from('aparelhos')
+    .update(bloquear ? { bloqueado: true } : { bloqueado: false, liberado: true })
+    .eq('device_id', id));
   cacheAp.delete(id);
   res.json({ ok: true });
 }));
@@ -620,18 +642,21 @@ app.get('/api/monitor/aparelhos', limiteIp('mon', 60), requerAdmin, rota(async (
 
   const ids = sinc.map((s) => s.device_id);
   const aps = ids.length
-    ? exige(await db.from('aparelhos').select('device_id, bloqueado').in('device_id', ids))
+    ? exige(await db.from('aparelhos').select('device_id, bloqueado, liberado, criado_em').in('device_id', ids))
     : [];
-  const bloqueio = new Map(aps.map((a) => [a.device_id, a.bloqueado]));
+  const infoAp = new Map(aps.map((a) => [a.device_id, { bloqueado: !!a.bloqueado, teste: infoTeste(a) }]));
 
   res.json(sinc.map((item) => ({
     device_id: item.device_id,
     versao: item.versao,
     atualizado_em: item.atualizado_em,
-    bloqueado: bloqueio.get(item.device_id) || false,
-    usuario: item.dados?.usuario || 'Sem nome',
-    email: item.dados?.email || 'Sem email',
-    telefone: item.dados?.telefone || 'Sem telefone',
+    // "Bloqueado" no painel = bloqueado à mão OU teste de 20 dias vencido
+    bloqueado: !!(infoAp.get(item.device_id)?.bloqueado || infoAp.get(item.device_id)?.teste.vencido),
+    teste_vencido: !!infoAp.get(item.device_id)?.teste.vencido,
+    dias_restantes: infoAp.get(item.device_id)?.teste.liberado ? null : infoAp.get(item.device_id)?.teste.restantes ?? null,
+    usuario: item.dados?.usuario || item.dados?.config?.usuario || 'Sem nome',
+    email: item.dados?.email || item.dados?.config?.email || 'Sem email',
+    telefone: item.dados?.telefone || item.dados?.config?.telefone || 'Sem telefone',
     dados: item.dados,
   })));
 }));

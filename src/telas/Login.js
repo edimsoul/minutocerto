@@ -171,8 +171,9 @@ export default function Login({ config, setConfig, onEntrar, onResetar }) {
       const senhaHash = await hashSenha(senha, salt);
       await gravarCred(salt, senhaHash);
       await salvarEmailCadastrado(em);
+      // email entra no config para ser sincronizado e aparecer no /monitor
       setConfig({
-        ...config, usuario: usuario.trim(), salt, senhaHash,
+        ...config, usuario: usuario.trim(), email: em, salt, senhaHash,
         aceite: { versao: VERSAO_TERMOS, em: Date.now() },
       });
       registrarAcesso('aceite_termos', usuario.trim(), VERSAO);
