@@ -19,7 +19,7 @@ const STATE_SECRET = (process.env.STATE_SECRET || '').trim();
 const PUBLIC_URL = (PUBLIC_URL_BRUTA || '').trim().replace(/\/+$/, '');
 
 // ---------- regras comerciais ----------
-const TAXA = 0.01;
+const TAXA = 0.00;
 const AVISO_TAXA = `Será cobrado ${String(TAXA * 100).replace('.', ',')}% sobre cada Pix, para manutenção do sistema.`;
 const RETENCAO_ACESSOS_DIAS = 180;
 const TESTE_DIAS = 20;
