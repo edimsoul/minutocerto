@@ -14,7 +14,7 @@ import { useVoltarAndroid } from './src/hooks';
 import { useAtualizacao, AvisoBaixando } from './src/atualizacao';
 import { useSincronizacao, registrarAcesso } from './src/sincronizacao';
 import { backupSeNecessario, temToken, apagarContaBackup } from './src/backup';
-import { excluirMeusDados } from './src/nuvem';
+import { excluirMeusDados, planoMP } from './src/nuvem';
 import { lerEmailCadastrado } from './src/recuperacao';
 import { useGrupo, sairDoGrupo, estadoGrupo, sincronizarAgora } from './src/grupo';
 
@@ -36,9 +36,6 @@ import BackupTela from './src/telas/Backuptela';
 import ConectarAparelho from './src/telas/ConectarAparelho';
 import Privacidade from './src/telas/Privacidade';
 import RestaurarBackup from './src/componentes/RestaurarBackup';
-
-const URL_SERVIDOR = 'https://minutocerto.onrender.com';
-const APP_KEY = 'minuto2026chaveapp';
 
 const TITULOS = {
   cadastro: 'Cadastro de brinquedos', relatorio: 'Relatório',
@@ -105,47 +102,30 @@ function Principal() {
   }, []);
 
   // --- VERIFICAR BLOQUEIO / TESTE NO SERVIDOR ---
-  // Usa uma consulta (GET) que não altera nenhum dado. O servidor responde 403 se o aparelho
-  // estiver bloqueado ou com o teste de 20 dias vencido. Nada é apagado do aparelho: quando
-  // você desbloqueia no /monitor, o acesso volta.
-  // Retorna true (bloqueado), false (liberado) ou null (não foi possível verificar).
+  // Usa a mesma identidade do aparelho que o resto do app (src/nuvem.js) e uma consulta (GET)
+  // que não altera nenhum dado. O servidor responde 403 se o aparelho estiver bloqueado ou com o
+  // teste de 20 dias vencido. Nada é apagado do aparelho: quando você desbloqueia no /monitor,
+  // o acesso volta. Retorna true (bloqueado), false (liberado) ou null (não foi possível verificar).
   const checarBloqueio = async () => {
     try {
-      const deviceId = await AsyncStorage.getItem('@minutocerto_device_id');
-      const deviceSecret = await AsyncStorage.getItem('@minutocerto_device_secret');
-      if (!deviceId || !deviceSecret) return null;
-
-      const resposta = await fetch(`${URL_SERVIDOR}/mp/plano`, {
-        method: 'GET',
-        headers: {
-          'x-app-key': APP_KEY,
-          'x-device-id': deviceId,
-          'x-device-secret': deviceSecret,
-        },
-      });
-
-      if (resposta.status === 403) {
-        const corpo = await resposta.json().catch(() => ({}));
-        setMotivo(corpo.codigo === 'teste_expirado' ? 'teste_expirado' : 'bloqueado');
+      const corpo = await planoMP();
+      setBloqueadoAdmin(false);
+      await AsyncStorage.removeItem('@minutocerto_bloqueado');
+      const teste = corpo && corpo.teste;
+      if (teste && !teste.liberado && teste.restantes <= 1 && !avisouFimTeste.current) {
+        avisouFimTeste.current = true;
+        Alert.alert('Atenção: teste acabando!', 'Seu período de teste vence em breve. Para continuar usando o app sem interrupções, entre em contato pelo WhatsApp: (85) 99953-8924.');
+      }
+      return false;
+    } catch (e) {
+      if (e && e.status === 403) {
+        const codigo = e.codigo === 'teste_expirado' ? 'teste_expirado' : 'bloqueado';
+        setMotivo(codigo);
         setBloqueadoAdmin(true);
-        await AsyncStorage.setItem('@minutocerto_bloqueado', corpo.codigo || 'bloqueado');
+        try { await AsyncStorage.setItem('@minutocerto_bloqueado', codigo); } catch (e2) { /* ignora */ }
         return true;
       }
-      if (resposta.ok) {
-        const corpo = await resposta.json().catch(() => ({}));
-        setBloqueadoAdmin(false);
-        await AsyncStorage.removeItem('@minutocerto_bloqueado');
-        const teste = corpo.teste;
-        if (teste && !teste.liberado && teste.restantes <= 1 && !avisouFimTeste.current) {
-          avisouFimTeste.current = true;
-          Alert.alert('Atenção: teste acabando!', 'Seu período de teste vence em breve. Para continuar usando o app sem interrupções, entre em contato pelo WhatsApp: (85) 99953-8924.');
-        }
-        return false;
-      }
-      return null;
-    } catch (e) {
-      console.log('Erro ao checar bloqueio', e);
-      // Sem internet: se já estava bloqueado da última vez, continua bloqueado
+      // Sem internet ou servidor fora do ar: se já estava bloqueado da última vez, continua bloqueado
       try {
         const marca = await AsyncStorage.getItem('@minutocerto_bloqueado');
         if (marca) {
@@ -165,7 +145,9 @@ function Principal() {
     const sub = AppState.addEventListener('change', (estado) => {
       if (estado === 'active') checarBloqueio();
     });
-    return () => sub.remove();
+    // também confere a cada 5 minutos, para derrubar quem está com o app aberto
+    const timer = setInterval(checarBloqueio, 5 * 60 * 1000);
+    return () => { sub.remove(); clearInterval(timer); };
   }, [logado]);
 
   const verificarDeNovo = async () => {

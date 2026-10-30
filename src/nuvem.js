@@ -2,7 +2,9 @@ import { Linking } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import * as Crypto from 'expo-crypto';
 
-export const SERVIDOR = 'https://minutoseguro-server.onrender.com';
+// ATENÇÃO: este endereço precisa ser o MESMO serviço do Render onde está o server.js novo
+// (o que tem o /monitor). Se o app apontar para outro servidor, o bloqueio não funciona.
+export const SERVIDOR = 'https://minutocerto.onrender.com';
 export const APP_KEY = 'minuto2026chaveapp'; // precisa ser igual ao APP_KEY do servidor
 
 export const URL_PRIVACIDADE = `${SERVIDOR}/privacidade`;
@@ -123,6 +125,7 @@ async function chamar(metodo, rota, corpo, { renovar = true } = {}) {
     if (!r.ok) {
       const err = new Error(j.erro || `Erro ${r.status}`);
       err.status = r.status;
+      err.codigo = j.codigo; // ex.: 'bloqueado' ou 'teste_expirado'
       throw err;
     }
     return j;
