@@ -262,8 +262,9 @@ const plano = () => ({
   aviso: AVISO_TAXA,
 });
 
+// Com TAXA = 0 não cobra nada (antes mandava application_fee de 1 centavo)
 function taxaDoPedido(valor, conta) {
-  if (!conta.conectada) return 0;
+  if (!conta.conectada || TAXA <= 0) return 0;
   const taxa = Math.max(0.01, Math.round(valor * TAXA * 100) / 100);
   return taxa < valor ? taxa : 0;
 }
@@ -320,7 +321,7 @@ async function criarPix(p) {
       referencia: p.referencia, mp_id: String(pag.id), device_id: p.deviceId,
       valor: p.valor, descricao: p.descricao, metodo: 'pix', status: pag.status || 'pendente', taxa,
     });
-  } catch (e) { console.error('[registrar pagamento]', e.message); }
+  } catch (e) { console.error('[registrar pagamento] FALHOU, o pagamento não aparecerá no painel:', e.message); }
   return { pag, taxa, t: pag.point_of_interaction?.transaction_data || {} };
 }
 
@@ -477,12 +478,15 @@ app.post('/webhook/mercadopago', async (req, res) => {
   if (!MP_WEBHOOK_SECRET) return res.sendStatus(503);
   const dataId = String(req.query['data.id'] || req.body?.data?.id || '');
   const tipo = req.query.type || req.query.topic || req.body?.type;
-  if (!assinaturaValida(req, dataId)) return res.sendStatus(401);
+  if (!assinaturaValida(req, dataId)) {
+    console.warn('[webhook] assinatura inválida: confira se MP_WEBHOOK_SECRET é a chave secreta da sua aplicação no Mercado Pago');
+    return res.sendStatus(401);
+  }
   res.sendStatus(200);
   if (tipo !== 'payment' || !dataId) return;
   try {
     const donoId = req.body?.user_id;
-    if (!donoId) return;
+    if (!donoId) { console.warn('[webhook] sem user_id no corpo; a reconciliação automática cobre este caso'); return; }
     const { data } = await db.from('mp_contas').select('access_token').eq('mp_user_id', String(donoId)).maybeSingle();
     if (data?.access_token) await atualizarPagamento(dataId, data.access_token);
   } catch (e) {
@@ -631,6 +635,46 @@ app.get('/api/monitor/acessos', limiteIp('mon', 60), requerAdmin, rota(async (re
 app.get('/api/monitor/pagamentos', limiteIp('mon', 60), requerAdmin, rota(async (req, res) => {
   res.json(exige(await db.from('pagamentos').select('*').order('criado_em', { ascending: false }).limit(limiteConsulta(req))));
 }));
+
+// --- Reconciliação: confere no Mercado Pago os pagamentos ainda pendentes e atualiza o status ---
+let reconciliando = false;
+async function reconciliarPendentes() {
+  if (reconciliando) return { verificados: 0, atualizados: 0, erros: 0, ocupado: true };
+  reconciliando = true;
+  try {
+    const desde = new Date(Date.now() - 3 * DIA_MS).toISOString();
+    const pend = exige(await db.from('pagamentos')
+      .select('mp_id, device_id, status')
+      .in('status', ['pending', 'pendente', 'in_process'])
+      .gte('criado_em', desde).limit(200));
+    let atualizados = 0, erros = 0;
+    for (const p of pend) {
+      try {
+        if (!p.mp_id || !/^\d+$/.test(String(p.mp_id))) continue;
+        const conta = await contaDoAparelho(p.device_id);
+        if (!conta.conectada) continue;
+        const pag = await mp(`/v1/payments/${p.mp_id}`, { token: conta.token });
+        if (pag.status && pag.status !== p.status) {
+          exige(await db.from('pagamentos')
+            .update({ status: pag.status, atualizado_em: new Date().toISOString() })
+            .eq('mp_id', String(p.mp_id)));
+          atualizados++;
+        }
+      } catch (e) { erros++; console.error('[reconciliar]', e.detalhe || e.message); }
+    }
+    if (atualizados) console.log(`[reconciliar] ${atualizados} pagamento(s) atualizado(s)`);
+    return { verificados: pend.length, atualizados, erros };
+  } finally {
+    reconciliando = false;
+  }
+}
+
+app.post('/api/monitor/reconciliar', limiteIp('mon', 20), requerAdmin, rota(async (req, res) => {
+  res.json({ ok: true, ...(await reconciliarPendentes()) });
+}));
+
+// automático a cada 3 minutos
+setInterval(() => reconciliarPendentes().catch((e) => console.error('[reconciliar]', e.message)), 180000).unref();
 
 // --- APARELHOS: duas consultas separadas (sem join, não depende de chave estrangeira) ---
 app.get('/api/monitor/aparelhos', limiteIp('mon', 60), requerAdmin, rota(async (req, res) => {
