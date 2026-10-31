@@ -715,4 +715,12 @@ setInterval(() => {
   db.from('sessoes_backup').delete().lt('expira_em', new Date().toISOString()).then(() => {}, () => {});
 }, 24 * 3600e3).unref();
 
+// Mantém o Render acordado: chama o próprio /health a cada 10 minutos
+const URL_PING = PUBLIC_URL || 'https://minutocerto.onrender.com';
+setInterval(() => {
+  fetch(`${URL_PING}/health`, { signal: AbortSignal.timeout(15000) })
+    .then((r) => console.log('[ping]', r.status))
+    .catch((e) => console.warn('[ping] falhou:', e.message));
+}, 10 * 60 * 1000).unref();
+
 app.listen(PORT, () => console.log(`MinutoCerto servidor na porta ${PORT}`));
