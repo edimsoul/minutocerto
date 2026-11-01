@@ -2,10 +2,8 @@ import { Linking } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import * as Crypto from 'expo-crypto';
 
-// ATENÇÃO: este endereço precisa ser o MESMO serviço do Render onde está o server.js novo
-// (o que tem o /monitor). Se o app apontar para outro servidor, o bloqueio não funciona.
 export const SERVIDOR = 'https://minutocerto.onrender.com';
-export const APP_KEY = 'minuto2026chaveapp'; // precisa ser igual ao APP_KEY do servidor
+export const APP_KEY = 'minuto2026chaveapp';
 
 export const URL_PRIVACIDADE = `${SERVIDOR}/privacidade`;
 export const URL_TERMOS = `${SERVIDOR}/termos`;
@@ -27,7 +25,6 @@ export function configuracaoPendente() {
   );
 }
 
-/* ── identidade do aparelho: id aleatório + segredo emitido pelo servidor ── */
 let identidade = null;
 let emAndamento = null;
 
@@ -61,7 +58,7 @@ async function resolverIdentidade() {
       await SecureStore.setItemAsync('mc_dsecret', r.segredo);
       return { id, segredo: r.segredo };
     }
-    if (r.status === 409) { // o servidor já conhece este id e não temos o segredo: começa com id novo
+    if (r.status === 409) {
       await SecureStore.deleteItemAsync('mc_device');
       continue;
     }
@@ -80,13 +77,11 @@ export async function obterIdentidade() {
   return emAndamento;
 }
 
-// usado quando o servidor não reconhece mais o segredo deste aparelho
 export async function renovarIdentidade() {
   identidade = null;
   try { await SecureStore.deleteItemAsync('mc_dsecret'); } catch (e) {}
 }
 
-// chamado pelo "apagar tudo": o aparelho começa com identidade nova
 export async function esquecerIdentidade() {
   identidade = null;
   for (const k of ['mc_device', 'mc_dsecret']) {
@@ -109,7 +104,7 @@ export async function cabecalhos(extra = {}) {
 
 async function chamar(metodo, rota, corpo, { renovar = true } = {}) {
   const ctrl = new AbortController();
-  const limite = setTimeout(() => ctrl.abort(), 60000); // 60s: o Render pode demorar para acordar
+  const limite = setTimeout(() => ctrl.abort(), 60000);
   try {
     const r = await fetch(`${SERVIDOR}${rota}`, {
       method: metodo,
@@ -125,7 +120,7 @@ async function chamar(metodo, rota, corpo, { renovar = true } = {}) {
     if (!r.ok) {
       const err = new Error(j.erro || `Erro ${r.status}`);
       err.status = r.status;
-      err.codigo = j.codigo; // ex.: 'bloqueado' ou 'teste_expirado'
+      err.codigo = j.codigo;
       throw err;
     }
     return j;
@@ -154,6 +149,7 @@ export async function statusMercadoPago() {
 }
 
 export const planoMP = () => chamar('GET', ROTA_PLANO);
+export const presenca = () => chamar('POST', '/presenca', {});
 
 async function pedirUrlDeConexao() {
   if (configuracaoPendente()) throw new Error('Falta preencher SERVIDOR e APP_KEY em src/nuvem.js');
@@ -180,5 +176,8 @@ export async function desconectarMercadoPago() {
 export const criarPix = (valor, descricao) => chamar('POST', '/mp/pix', { valor, descricao });
 export const statusPix = (id) => chamar('GET', `/mp/pix/${id}`);
 
-// Exclui os dados deste aparelho no servidor (LGPD). Não tenta recriar identidade se ela já não existe.
+export const assinaturaStatus = () => chamar('GET', '/assinatura/status');
+export const criarPixAssinatura = () => chamar('POST', '/assinatura/pix', {});
+export const statusPixAssinatura = (id) => chamar('GET', `/assinatura/pix/${id}`);
+
 export const excluirMeusDados = () => chamar('DELETE', '/meus-dados', undefined, { renovar: false });

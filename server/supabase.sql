@@ -13,6 +13,24 @@ create table if not exists acessos (
   criado_em timestamptz not null default now()
 );
 create index if not exists acessos_criado_em_idx on acessos (criado_em desc);
+alter table aparelhos add column if not exists pago_ate timestamptz;
+
+create table if not exists assinaturas (
+  id bigserial primary key,
+  referencia text unique not null,
+  mp_id text unique,
+  device_id text not null,
+  valor numeric not null,
+  status text not null default 'pending',
+  aplicado boolean not null default false,
+  criado_em timestamptz not null default now(),
+  atualizado_em timestamptz not null default now()
+);
+
+alter table assinaturas enable row level security;
+
+alter table aparelhos add column if not exists ultimo_uso timestamptz;
+
 
 create table if not exists pagamentos (
   id uuid primary key default gen_random_uuid(),

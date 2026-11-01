@@ -75,7 +75,7 @@ function PrecoMinuto({ valor, onChange, aoFocar }) {
         />
         <Text style={{ color: cor.suave, fontWeight: '700' }}>por minuto</Text>
       </View>
- 
+     
     </View>
   );
 }

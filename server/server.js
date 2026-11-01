@@ -1,4 +1,4 @@
-﻿require('dotenv').config();
+require('dotenv').config();
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
@@ -18,20 +18,31 @@ const ADMIN_TOKEN = (process.env.ADMIN_TOKEN || '').trim();
 const STATE_SECRET = (process.env.STATE_SECRET || '').trim();
 const PUBLIC_URL = (PUBLIC_URL_BRUTA || '').trim().replace(/\/+$/, '');
 
-// ---------- regras comerciais ----------
 const TAXA = 0.00;
 const AVISO_TAXA = `Será cobrado ${String(TAXA * 100).replace('.', ',')}% sobre cada Pix, para manutenção do sistema.`;
 const RETENCAO_ACESSOS_DIAS = 180;
 const TESTE_DIAS = 20;
+const GRACA_DIAS = 2;
 const DIA_MS = 86400000;
 
-// Teste grátis controlado pelo servidor: conta a partir de aparelhos.criado_em.
-// Quem foi liberado no /monitor (liberado = true) não expira mais.
 function infoTeste(a) {
   const liberado = !!a?.liberado;
-  const fim = a?.criado_em ? new Date(a.criado_em).getTime() + TESTE_DIAS * DIA_MS : null;
-  const restantes = fim ? Math.max(0, Math.ceil((fim - Date.now()) / DIA_MS)) : TESTE_DIAS;
-  return { dias: TESTE_DIAS, restantes, liberado, vencido: !liberado && !!fim && Date.now() > fim };
+  const agora = Date.now();
+  const criado = a?.criado_em ? new Date(a.criado_em).getTime() : null;
+  const fimTeste = criado ? criado + TESTE_DIAS * DIA_MS : null;
+  const pagoAte = a?.pago_ate ? new Date(a.pago_ate).getTime() : null;
+  const vencimento = pagoAte || fimTeste;
+  const limiteAcesso = pagoAte ? pagoAte + GRACA_DIAS * DIA_MS : fimTeste;
+  const restantes = vencimento ? Math.max(0, Math.ceil((vencimento - agora) / DIA_MS)) : TESTE_DIAS;
+  const fase = liberado ? 'liberado' : pagoAte ? 'assinatura' : 'teste';
+  return {
+    dias: TESTE_DIAS,
+    restantes,
+    liberado,
+    fase,
+    venceEm: vencimento ? new Date(vencimento).toISOString() : null,
+    vencido: !liberado && !!limiteAcesso && agora > limiteAcesso,
+  };
 }
 
 for (const nome of ['SUPABASE_URL', 'SUPABASE_SERVICE_KEY', 'APP_KEY', 'ADMIN_TOKEN', 'STATE_SECRET', 'MP_WEBHOOK_SECRET']) {
@@ -69,7 +80,6 @@ app.use((req, res, next) => {
 });
 app.use(express.json({ limit: '5mb' }));
 
-// ---------- utilidades ----------
 const sha256 = (t) => crypto.createHash('sha256').update(String(t)).digest('hex');
 
 function igual(a, b) {
@@ -124,7 +134,17 @@ const exige = (r) => { if (r.error) throw new Error(`Supabase: ${r.error.message
 const requerApp = (req, res, next) =>
   igual(req.get('x-app-key'), APP_KEY) ? next() : res.status(401).json({ erro: 'Não autorizado.' });
 
-async function requerAparelho(req, res, next) {
+async function lerAparelho(id) {
+  let r = await db.from('aparelhos')
+    .select('segredo_hash, bloqueado, liberado, criado_em, pago_ate').eq('device_id', id).maybeSingle();
+  if (r.error && /pago_ate/i.test(r.error.message)) {
+    r = await db.from('aparelhos')
+      .select('segredo_hash, bloqueado, liberado, criado_em').eq('device_id', id).maybeSingle();
+  }
+  return r;
+}
+
+const aparelho = (permitirVencido) => async (req, res, next) => {
   try {
     const id = req.get('x-device-id');
     const seg = req.get('x-device-secret') || '';
@@ -133,7 +153,7 @@ async function requerAparelho(req, res, next) {
     }
     let c = cacheAp.get(id);
     if (!c || Date.now() > c.ate) {
-      const r = await db.from('aparelhos').select('segredo_hash, bloqueado, liberado, criado_em').eq('device_id', id).maybeSingle();
+      const r = await lerAparelho(id);
       if (r.error) throw new Error(r.error.message);
       c = { dados: r.data, ate: Date.now() + 60000 };
       cacheAp.set(id, c);
@@ -146,8 +166,12 @@ async function requerAparelho(req, res, next) {
       return res.status(403).json({ erro: 'Este aparelho foi bloqueado. Fale com o suporte.', codigo: 'bloqueado' });
     }
     const teste = infoTeste(c.dados);
-    if (teste.vencido) {
-      return res.status(403).json({ erro: 'O teste gratuito de 20 dias acabou. Fale com o suporte.', codigo: 'teste_expirado' });
+    if (teste.vencido && !permitirVencido) {
+      const assinatura = teste.fase === 'assinatura';
+      return res.status(403).json({
+        erro: assinatura ? 'A mensalidade venceu. Renove para continuar.' : 'O teste gratuito de 20 dias acabou. Fale com o suporte.',
+        codigo: assinatura ? 'assinatura_vencida' : 'teste_expirado',
+      });
     }
     req.teste = teste;
     req.deviceId = id;
@@ -156,7 +180,9 @@ async function requerAparelho(req, res, next) {
     console.error('[aparelho]', e.message);
     res.status(500).json({ erro: 'Erro interno.' });
   }
-}
+};
+const requerAparelho = aparelho(false);
+const requerAparelhoLivre = aparelho(true);
 
 function requerAdmin(req, res, next) {
   const chave = `adm-falhas|${req.ip}`;
@@ -185,7 +211,6 @@ function inicioDoPeriodo(p) {
   return new Date(Date.UTC(y, m, d) + 3 * 3600e3).toISOString();
 }
 
-// ---------- Mercado Pago ----------
 async function mp(caminho, { method = 'GET', body, token, idem } = {}) {
   if (!token) throw falha(400, 'Conecte sua conta do Mercado Pago primeiro.');
   const r = await fetch(`https://api.mercadopago.com${caminho}`, {
@@ -262,7 +287,6 @@ const plano = () => ({
   aviso: AVISO_TAXA,
 });
 
-// Com TAXA = 0 não cobra nada (antes mandava application_fee de 1 centavo)
 function taxaDoPedido(valor, conta) {
   if (!conta.conectada || TAXA <= 0) return 0;
   const taxa = Math.max(0.01, Math.round(valor * TAXA * 100) / 100);
@@ -363,6 +387,10 @@ app.get('/mp/pix/:id', ...doAparelho, limite(120), rota(async (req, res) => {
   res.json({ id: pag.id, status: pag.status });
 }));
 
+app.post('/presenca', ...doAparelho, limite(120), rota(async (req, res) => {
+  res.json({ ok: true });
+}));
+
 app.get('/mp/plano', ...doAparelho, limite(60), rota(async (req, res) => {
   res.json({ ...plano(), teste: req.teste });
 }));
@@ -451,6 +479,11 @@ app.use('/recuperacao', requerApp, limiteIp('rec', 60), require('./recuperacao')
 app.use('/backup', requerApp, limiteIp('bk', 120), require('./backup')(db));
 app.use('/grupo', requerApp, requerAparelho, grupoRouter);
 
+const assinaturaRouter = require('./assinatura')({
+  db, mp, rota, falha, exige, limite, cacheAp, testeDias: TESTE_DIAS,
+});
+app.use('/assinatura', requerApp, requerAparelhoLivre, assinaturaRouter);
+
 async function atualizarPagamento(mpId, token) {
   const pag = await mp(`/v1/payments/${mpId}`, { token });
   if (!pag.external_reference) return;
@@ -485,6 +518,7 @@ app.post('/webhook/mercadopago', async (req, res) => {
   res.sendStatus(200);
   if (tipo !== 'payment' || !dataId) return;
   try {
+    if (await assinaturaRouter.tratarWebhook(dataId)) return;
     const donoId = req.body?.user_id;
     if (!donoId) { console.warn('[webhook] sem user_id no corpo; a reconciliação automática cobre este caso'); return; }
     const { data } = await db.from('mp_contas').select('access_token').eq('mp_user_id', String(donoId)).maybeSingle();
@@ -618,7 +652,6 @@ app.post('/api/monitor/bloquear', limiteIp('mon', 30), requerAdmin, rota(async (
   const id = req.body?.device_id;
   if (!idValido(id)) throw falha(400, 'device_id inválido.');
   const bloquear = !!req.body?.bloquear;
-  // Desbloquear = liberar de vez (também encerra o controle do teste de 20 dias)
   exige(await db.from('aparelhos')
     .update(bloquear ? { bloqueado: true } : { bloqueado: false, liberado: true })
     .eq('device_id', id));
@@ -636,7 +669,6 @@ app.get('/api/monitor/pagamentos', limiteIp('mon', 60), requerAdmin, rota(async 
   res.json(exige(await db.from('pagamentos').select('*').order('criado_em', { ascending: false }).limit(limiteConsulta(req))));
 }));
 
-// --- Reconciliação: confere no Mercado Pago os pagamentos ainda pendentes e atualiza o status ---
 let reconciliando = false;
 async function reconciliarPendentes() {
   if (reconciliando) return { verificados: 0, atualizados: 0, erros: 0, ocupado: true };
@@ -673,10 +705,9 @@ app.post('/api/monitor/reconciliar', limiteIp('mon', 20), requerAdmin, rota(asyn
   res.json({ ok: true, ...(await reconciliarPendentes()) });
 }));
 
-// automático a cada 3 minutos
 setInterval(() => reconciliarPendentes().catch((e) => console.error('[reconciliar]', e.message)), 180000).unref();
+setInterval(() => assinaturaRouter.reconciliar().catch((e) => console.error('[assinatura]', e.message)), 180000).unref();
 
-// --- APARELHOS: duas consultas separadas (sem join, não depende de chave estrangeira) ---
 app.get('/api/monitor/aparelhos', limiteIp('mon', 60), requerAdmin, rota(async (req, res) => {
   const sinc = exige(await db
     .from('sincronizacoes')
@@ -685,18 +716,32 @@ app.get('/api/monitor/aparelhos', limiteIp('mon', 60), requerAdmin, rota(async (
     .limit(limiteConsulta(req)));
 
   const ids = sinc.map((s) => s.device_id);
-  const aps = ids.length
-    ? exige(await db.from('aparelhos').select('device_id, bloqueado, liberado, criado_em').in('device_id', ids))
-    : [];
-  const infoAp = new Map(aps.map((a) => [a.device_id, { bloqueado: !!a.bloqueado, teste: infoTeste(a) }]));
+  let aps = [];
+  if (ids.length) {
+    let ra = await db.from('aparelhos')
+      .select('device_id, bloqueado, liberado, criado_em, pago_ate, ultimo_uso').in('device_id', ids);
+    if (ra.error) {
+      ra = await db.from('aparelhos').select('device_id, bloqueado, liberado, criado_em').in('device_id', ids);
+    }
+    aps = exige(ra);
+  }
+  const infoAp = new Map(aps.map((a) => [a.device_id, {
+    bloqueado: !!a.bloqueado,
+    teste: infoTeste(a),
+    ultimoUso: a.ultimo_uso || null,
+    online: !!a.ultimo_uso && Date.now() - new Date(a.ultimo_uso).getTime() < 3 * 60000,
+  }]));
 
   res.json(sinc.map((item) => ({
     device_id: item.device_id,
     versao: item.versao,
     atualizado_em: item.atualizado_em,
-    // "Bloqueado" no painel = bloqueado à mão OU teste de 20 dias vencido
     bloqueado: !!(infoAp.get(item.device_id)?.bloqueado || infoAp.get(item.device_id)?.teste.vencido),
     teste_vencido: !!infoAp.get(item.device_id)?.teste.vencido,
+    online: !!infoAp.get(item.device_id)?.online,
+    fase: infoAp.get(item.device_id)?.teste.fase || null,
+    vence_em: infoAp.get(item.device_id)?.teste.venceEm || null,
+    ultimo_uso: infoAp.get(item.device_id)?.ultimoUso || null,
     dias_restantes: infoAp.get(item.device_id)?.teste.liberado ? null : infoAp.get(item.device_id)?.teste.restantes ?? null,
     usuario: item.dados?.usuario || item.dados?.config?.usuario || 'Sem nome',
     email: item.dados?.email || item.dados?.config?.email || 'Sem email',
@@ -714,13 +759,5 @@ setInterval(() => {
   db.from('falhas_admin').delete().lt('criado_em', corte).then(() => {}, () => {});
   db.from('sessoes_backup').delete().lt('expira_em', new Date().toISOString()).then(() => {}, () => {});
 }, 24 * 3600e3).unref();
-
-// Mantém o Render acordado: chama o próprio /health a cada 10 minutos
-const URL_PING = PUBLIC_URL || '  ';
-setInterval(() => {
-  fetch(`${URL_PING}/health`, { signal: AbortSignal.timeout(15000) })
-    .then((r) => console.log('[ping]', r.status))
-    .catch((e) => console.warn('[ping] falhou:', e.message));
-}, 10 * 60 * 1000).unref();
 
 app.listen(PORT, () => console.log(`MinutoCerto servidor na porta ${PORT}`));

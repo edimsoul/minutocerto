@@ -14,7 +14,7 @@ import { useVoltarAndroid } from './src/hooks';
 import { useAtualizacao, AvisoBaixando } from './src/atualizacao';
 import { useSincronizacao, registrarAcesso } from './src/sincronizacao';
 import { backupSeNecessario, temToken, apagarContaBackup } from './src/backup';
-import { excluirMeusDados, planoMP } from './src/nuvem';
+import { excluirMeusDados, planoMP, presenca } from './src/nuvem';
 import { lerEmailCadastrado } from './src/recuperacao';
 import { useGrupo, sairDoGrupo, estadoGrupo, sincronizarAgora } from './src/grupo';
 
@@ -34,13 +34,15 @@ import Acesso from './src/telas/Acesso';
 import Feedback from './src/telas/Feedback';
 import BackupTela from './src/telas/Backuptela';
 import ConectarAparelho from './src/telas/ConectarAparelho';
+import Assinatura from './src/telas/Assinatura';
+import Bloqueio from './src/telas/Bloqueio';
 import Privacidade from './src/telas/Privacidade';
 import RestaurarBackup from './src/componentes/RestaurarBackup';
 
 const TITULOS = {
   cadastro: 'Cadastro de brinquedos', relatorio: 'Relatório',
   valor: 'Valor do minuto', mp: 'Mercado Pago', acesso: 'Usuário e senha', backup: 'Backup na nuvem',
-  conectar: 'Conectar aparelho', feedback: 'Feedback', privacidade: 'Privacidade e dados',
+  conectar: 'Conectar aparelho', feedback: 'Feedback', privacidade: 'Privacidade e dados', assinatura: 'Assinatura',
 };
 
 function Principal() {
@@ -106,12 +108,22 @@ function Principal() {
       const teste = corpo && corpo.teste;
       if (teste && !teste.liberado && teste.restantes <= 1 && !avisouFimTeste.current) {
         avisouFimTeste.current = true;
-        Alert.alert('Atenção: teste acabando!', 'Seu período de teste vence em breve. Para continuar usando o app sem interrupções, entre em contato pelo WhatsApp: (85) 99953-8924.');
+        const data = teste.venceEm ? new Date(teste.venceEm).toLocaleDateString('pt-BR') : '';
+        const passou = teste.venceEm && new Date(teste.venceEm).getTime() < Date.now();
+        const verbo = passou ? 'venceu em' : 'vence em';
+        const titulo = teste.fase === 'assinatura' ? 'Mensalidade perto de vencer' : 'Atenção: teste acabando!';
+        const texto = teste.fase === 'assinatura'
+          ? `Sua mensalidade ${verbo} ${data}. Pague antes do bloqueio para continuar usando o app sem interrupções.`
+          : `Seu teste grátis ${passou ? 'terminou' : 'termina'} em ${data}. Assine para continuar usando o app sem interrupções.`;
+        Alert.alert(titulo, texto, [
+          { text: 'Depois' },
+          { text: 'Pagar agora', onPress: () => setTela('assinatura') },
+        ]);
       }
       return false;
     } catch (e) {
       if (e && e.status === 403) {
-        const codigo = e.codigo === 'teste_expirado' ? 'teste_expirado' : 'bloqueado';
+        const codigo = ['teste_expirado', 'assinatura_vencida'].includes(e.codigo) ? e.codigo : 'bloqueado';
         setMotivo(codigo);
         setBloqueadoAdmin(true);
         try { await AsyncStorage.setItem('@minutocerto_bloqueado', codigo); } catch (e2) {}
@@ -120,7 +132,7 @@ function Principal() {
       try {
         const marca = await AsyncStorage.getItem('@minutocerto_bloqueado');
         if (marca) {
-          setMotivo(marca === 'teste_expirado' ? 'teste_expirado' : 'bloqueado');
+          setMotivo(['teste_expirado', 'assinatura_vencida'].includes(marca) ? marca : 'bloqueado');
           setBloqueadoAdmin(true);
           return true;
         }
@@ -156,6 +168,16 @@ function Principal() {
       if (estado === 'active') backupSeNecessario();
     });
     return () => sub.remove();
+  }, [logado]);
+
+  useEffect(() => {
+    if (!logado) return undefined;
+    const bater = () => { presenca().catch(() => {}); };
+    bater();
+    const timer = setInterval(() => {
+      if (AppState.currentState === 'active') bater();
+    }, 60000);
+    return () => clearInterval(timer);
   }, [logado]);
 
   useGrupo(logado && configPronta, ({ desconectado, itens, eventos }) => {
@@ -227,30 +249,12 @@ function Principal() {
 
   if (bloqueadoAdmin) {
     return (
-      <View style={[s.centro, { padding: 24 }]}>
-        <Text style={{ fontSize: 22, fontWeight: 'bold', color: 'red', textAlign: 'center', marginBottom: 16 }}>
-          {motivo === 'teste_expirado' ? 'Teste expirado' : 'Acesso bloqueado'}
-        </Text>
-        <Text style={{ fontSize: 16, color: cor.suave, textAlign: 'center', marginBottom: 8 }}>
-          {motivo === 'teste_expirado'
-            ? 'Seu período de teste gratuito de 20 dias acabou. Para liberar o app, entre em contato com o responsável pelo WhatsApp:'
-            : 'O acesso deste aparelho está bloqueado. Entre em contato com o responsável pelo WhatsApp:'}
-        </Text>
-        <Text style={{ fontSize: 20, fontWeight: 'bold', color: cor.azul, marginBottom: 16 }}>
-          (85) 99953-8924
-        </Text>
-        <Text style={{ fontSize: 13, color: cor.suave, textAlign: 'center', marginBottom: 24 }}>
-          Seus dados estão guardados e voltam assim que o acesso for liberado.
-        </Text>
-        <TouchableOpacity
-          disabled={verificando}
-          onPress={verificarDeNovo}
-          style={{ backgroundColor: cor.tinta, borderRadius: 10, paddingHorizontal: 22, paddingVertical: 12 }}>
-          <Text style={{ color: cor.branco, fontWeight: '800', fontSize: 15 }}>
-            {verificando ? 'Verificando...' : 'Verificar novamente'}
-          </Text>
-        </TouchableOpacity>
-      </View>
+      <Bloqueio
+        motivo={motivo}
+        verificando={verificando}
+        aoVerificar={verificarDeNovo}
+        aoLiberado={checarBloqueio}
+      />
     );
   }
 
@@ -328,11 +332,15 @@ function Principal() {
         {tela === 'conectar' && <ConectarAparelho aoEntrar={importarDoPrincipal} />}
         {tela === 'feedback' && <Feedback />}
         {tela === 'privacidade' && <Privacidade onApagar={apagarMeusDados} />}
+        {tela === 'assinatura' && <Assinatura aoLiberado={checarBloqueio} />}
       </View>
 
       {tela === 'inicio' && (
         <View style={{ paddingVertical: 8, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', borderTopWidth: 1, borderColor: cor.linha, backgroundColor: cor.branco, marginBottom: 12 }}>
           <Text style={{ fontSize: 12, color: cor.suave }}>MinutoCerto · versão {VERSAO}</Text>
+          <TouchableOpacity onPress={() => setTela('assinatura')} accessibilityRole="link" accessibilityLabel="Assinatura">
+            <Text style={{ fontSize: 12, color: cor.azul, fontWeight: '700', marginLeft: 14 }}>Assinatura</Text>
+          </TouchableOpacity>
           <TouchableOpacity onPress={() => setTela('privacidade')} accessibilityRole="link" accessibilityLabel="Privacidade e dados">
             <Text style={{ fontSize: 12, color: cor.azul, fontWeight: '700', marginLeft: 14 }}>Privacidade e dados</Text>
           </TouchableOpacity>

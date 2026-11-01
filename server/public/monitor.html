@@ -38,7 +38,6 @@
   main { padding:0; }
   #aviso { display:none; background:var(--alerta); color:var(--amarelo); border-radius:8px; padding:8px 12px; font-size:13px; margin-bottom:12px; }
 
-  /* Cards clicáveis */
   .cards { display:grid; grid-template-columns:repeat(4, 1fr); gap:10px; margin-bottom:18px; }
   button.card {
     background:var(--card); color:var(--tinta); text-align:left; width:100%; font:inherit;
@@ -52,7 +51,6 @@
 
   .dica { text-align:center; color:var(--suave); font-size:14px; padding:20px 0; }
 
-  /* Seções */
   .secao { display:none; }
   .secao.visivel { display:block; }
   .sub { color:var(--suave); font-size:13px; margin:0 0 8px; }
@@ -79,7 +77,6 @@
   .ok { color:var(--verde); } .ruim { color:var(--vermelho); } .meio { color:var(--amarelo); }
   .mono { font-family: ui-monospace, Consolas, monospace; font-size:12px; word-break:break-all; white-space:normal; }
 
-  /* Login */
   #entrada { position:fixed; inset:0; z-index:10; background:var(--fundo); display:flex; align-items:center; justify-content:center; padding:20px; }
   #entrada form { background:var(--card); border:1px solid var(--linha); border-radius:14px; padding:24px; width:100%; max-width:340px; display:grid; gap:12px; }
   input { font:inherit; font-size:16px; padding:11px 12px; border-radius:8px; border:1px solid var(--linha); background:var(--card); color:var(--tinta); }
@@ -87,7 +84,6 @@
 
   @media (max-width: 900px) { .cards { grid-template-columns:repeat(2, 1fr); } }
 
-  /* Celular em pé: tabelas viram cartões empilhados */
   @media (max-width: 600px) {
     body { padding:12px 10px 24px; }
     h1, button.titulo { font-size:16px; }
@@ -145,7 +141,6 @@
 </main>
 
 <script>
-// Logo embutida no próprio arquivo (não depende de caminho nem de pasta do servidor).
 // >>> COLE AQUI a sua linha original "const LOGO_SRC = 'data:image/png;base64,...';" <<<
 // Enquanto estiver vazia, o painel mostra o texto "MinutoCerto · Monitor" no lugar da logo.
 const LOGO_SRC = '';
@@ -174,7 +169,6 @@ const GRUPOS = {
   estornados: ['refunded', 'charged_back'],
 };
 
-/* ---------- Estrutura (cards e seções) ---------- */
 const CARDS = [
   ['acessos', 'Acessos hoje', '#64748b'],
   ['aparelhos', 'Aparelhos conectados', '#5b8a8a'],
@@ -185,10 +179,9 @@ const CARDS = [
   ['pendentes', 'Pendentes e cancelados', '#b08a4a'],
   ['falhas', 'Senhas erradas', '#a86b6b'],
 ];
-// [id, título, subtítulo, [[idTabela, tituloTabela], ...]]
 const SECOES = [
   ['acessos', 'Acessos de hoje', 'Aparelho, usuário, IP e tudo o que o app enviou em cada acesso.', [['tb-acessos', '']]],
-  ['aparelhos', 'Aparelhos conectados', 'Aparelhos que sincronizaram, com dados do cliente e bloqueio.', [['tb-aparelhos', '']]],
+  ['aparelhos', 'Aparelhos conectados', 'Aparelhos que sincronizaram, com dados do cliente, plano e bloqueio.', [['tb-aparelhos', '']]],
   ['aprovados', 'Pagamentos aprovados hoje', 'Quantidade, valores e o que foi vendido em cada pagamento.', [['tb-aprovados-grupo', 'Por brinquedo / descrição'], ['tb-aprovados', 'Pagamentos']]],
   ['recebido', 'Recebimentos hoje', 'Total de ganhos do dia, quantidade e detalhes.', [['tb-recebido-metodo', 'Por método de pagamento'], ['tb-recebido', 'Pagamentos']]],
   ['total', 'Recebimentos total', 'Escolha o período para ver o total recebido.', [['tb-total-dia', 'Por dia'], ['tb-total', 'Pagamentos']]],
@@ -197,7 +190,6 @@ const SECOES = [
   ['falhas', 'Tentativas com senha errada', 'Quem errou a senha: quando, qual usuário, aparelho e IP.', [['tb-falhas', '']]],
 ];
 
-// Só strings fixas do próprio painel entram como HTML; dados do servidor sempre via textContent
 function montarEstrutura() {
   $('cards').innerHTML = CARDS.map(([id, rot, cor]) => `
     <button class="card" type="button" data-view="${id}" style="--c:${cor}">
@@ -218,7 +210,6 @@ function montarEstrutura() {
     </div>`).join('');
 }
 
-/* ---------- Helpers de DOM e dados ---------- */
 function tabela(id, cols, rows) {
   const t = $(id);
   t.replaceChildren();
@@ -282,7 +273,6 @@ function card(id, valor, sub) {
   $('c-' + id).textContent = valor;
   $('cn-' + id).textContent = sub || '';
 }
-// Mostra qualquer campo extra que o servidor enviar
 function extras(o, conhecidos) {
   const chaves = Object.keys(o || {}).filter((k) => !conhecidos.includes(k) && o[k] !== null && o[k] !== undefined && o[k] !== '');
   if (!chaves.length) return '—';
@@ -306,7 +296,6 @@ function mono(texto) {
   return sp;
 }
 
-/* Períodos: hoje, semana (desde segunda) e mês (desde dia 1) */
 function inicioPeriodo(p) {
   const h = new Date();
   h.setHours(0, 0, 0, 0);
@@ -340,7 +329,6 @@ const aprovadosEm = (p) => dados.pagamentos.filter((x) => x.status === 'approved
 const acessosDoDia = () => dados.acessos.filter((a) => noPeriodo(a.criado_em, 'hoje'));
 const ultimoAcessoDe = (device) => dados.acessos.find((a) => a.device_id === device);
 
-/* ---------- Renderização de cada seção ---------- */
 const K_ACESSO = ['criado_em', 'evento', 'usuario', 'device_id', 'versao', 'ip'];
 const K_PAG = ['criado_em', 'valor', 'metodo', 'status', 'device_id', 'descricao', 'brinquedo', 'item', 'titulo', 'nome'];
 
@@ -364,13 +352,25 @@ function renderAcessos() {
   ], hoje);
 }
 
+function planoTexto(a) {
+  if (!a.fase) {
+    return a.dias_restantes === null || a.dias_restantes === undefined
+      ? 'Liberado'
+      : (a.dias_restantes + (a.dias_restantes === 1 ? ' dia' : ' dias'));
+  }
+  if (a.fase === 'liberado') return 'Liberado';
+  const d = a.vence_em ? new Date(a.vence_em).toLocaleDateString('pt-BR') : '—';
+  return (a.fase === 'assinatura' ? 'Mensalidade até ' : 'Teste até ') + d;
+}
+
 function renderAparelhos() {
   const r = dados.resumo || {};
   const todos = dados.aparelhos;
   const lista = filtro.aparelhos === 'hoje' ? todos.filter((a) => noPeriodo(a.atualizado_em, 'hoje')) : todos;
-  card('aparelhos', r.aparelhos_24h ?? lista.length, 'últimas 24 h');
+  const online = todos.filter((a) => a.online).length;
+  card('aparelhos', r.aparelhos_24h ?? lista.length, online + ' online agora');
   tabs('t-aparelhos', 'aparelhos', [['hoje', 'Hoje'], ['todos', 'Todos']]);
-  stats('r-aparelhos', [['Conectados (24 h)', r.aparelhos_24h ?? '—'], ['Na lista', lista.length], ['Registrados', todos.length]]);
+  stats('r-aparelhos', [['Online agora', online], ['Conectados (24 h)', r.aparelhos_24h ?? '—'], ['Na lista', lista.length], ['Registrados', todos.length]]);
 
   tabela('tb-aparelhos', [
     { t: 'Aparelho (ID)', f: (a) => mono(a.device_id) },
@@ -379,9 +379,11 @@ function renderAparelhos() {
     { t: 'Telefone', f: (a) => a.telefone || '—' },
     { t: 'Versão', f: (a) => a.versao },
     { t: 'Última sinc.', f: (a) => quando(a.atualizado_em) },
-    { t: 'Teste', f: (a) => a.dias_restantes === null || a.dias_restantes === undefined ? 'Liberado' : (a.dias_restantes + (a.dias_restantes === 1 ? ' dia' : ' dias')) },
+    { t: 'Online', f: (a) => tag(a.online ? ['Online', 'ok'] : ['Offline', '']) },
+    { t: 'Visto por último', f: (a) => quando(a.ultimo_uso) },
+    { t: 'Plano', f: planoTexto },
     { t: 'Status', f: (a) => {
-        if (a.teste_vencido && a.bloqueado) return tag(['Teste vencido', 'ruim']);
+        if (a.teste_vencido && a.bloqueado) return tag([a.fase === 'assinatura' ? 'Mensalidade vencida' : 'Teste vencido', 'ruim']);
         return tag([a.bloqueado ? 'Bloqueado' : 'Ativo', a.bloqueado ? 'ruim' : 'ok']);
     } },
     { t: 'Ações', f: (a) => {
@@ -408,7 +410,7 @@ function renderAparelhos() {
         });
         return btn;
     } },
-    { t: 'Detalhes', c: 'desc', f: (a) => extras(a, ['device_id', 'versao', 'atualizado_em', 'usuario', 'email', 'telefone', 'bloqueado', 'teste_vencido', 'dias_restantes']) },
+    { t: 'Detalhes', c: 'desc', f: (a) => extras(a, ['device_id', 'versao', 'atualizado_em', 'usuario', 'email', 'telefone', 'bloqueado', 'teste_vencido', 'dias_restantes', 'online', 'ultimo_uso', 'fase', 'vence_em']) },
   ], lista);
 }
 
@@ -521,7 +523,6 @@ function renderFalhas() {
   ], falhas);
 }
 
-// Cada seção roda isolada: se uma falhar, as outras continuam aparecendo
 function renderTudo() {
   if (!dados.resumo) return;
   [renderAcessos, renderAparelhos, renderAprovados, renderRecebido,
@@ -530,7 +531,6 @@ function renderTudo() {
   });
 }
 
-/* ---------- Navegação ---------- */
 function selecionar(view) {
   viewAtual = view;
   document.querySelectorAll('.card').forEach((c) => c.classList.toggle('ativo', c.dataset.view === view));
@@ -539,7 +539,6 @@ function selecionar(view) {
   if (view) $('v-' + view).scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-/* ---------- API e ciclo de vida ---------- */
 async function api(caminho, opcoes = {}) {
   const r = await fetch(caminho, { ...opcoes, headers: { 'x-admin-token': token, ...(opcoes.headers || {}) } });
   if (r.status === 401) throw Object.assign(new Error('Senha inválida.'), { auth: true });
@@ -589,7 +588,6 @@ async function atualizar() {
   }
 }
 
-// Pede ao servidor para conferir no Mercado Pago os pagamentos pendentes e só depois recarrega
 async function reconciliarEAtualizar() {
   const btn = $('atualizar');
   btn.disabled = true;
@@ -598,7 +596,6 @@ async function reconciliarEAtualizar() {
     if (r && r.atualizados) $('estado').textContent = `${r.atualizados} pagamento(s) atualizado(s)…`;
   } catch (e) {
     if (e.auth) { btn.disabled = false; return sair('Senha inválida.'); }
-    // rota ainda não existe no servidor ou falhou: segue só com a atualização normal
   }
   await atualizar();
   btn.disabled = false;
