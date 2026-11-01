@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const express = require('express');
 
 const DIA_MS = 86400000;
-const TOKEN = (process.env.MP_TOKEN_ASSINATURA || '').trim();
+const TOKEN = (process.env.MP_ACCESS_TOKEN || '').trim();
 const VALOR = Math.round(Number(String(process.env.MENSALIDADE_VALOR || '').replace(',', '.')) * 100) / 100;
 const DIAS = Number(process.env.MENSALIDADE_DIAS) || 30;
 const EMAIL = (process.env.PAGADOR_EMAIL_PADRAO || 'pagamento@minutocerto.app').trim();

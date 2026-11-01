@@ -3,10 +3,6 @@ import { Modal, View, Text, ActivityIndicator, Alert, StyleSheet } from 'react-n
 import * as Updates from 'expo-updates';
 import { cor } from './tema';
 
-// Verifica atualização e pergunta "agora" ou "depois", mas SÓ enquanto `ativo` for true
-// (no App.js: ativo = !logado, ou seja, só nas telas de carregamento/login).
-// Pergunta no máximo uma vez por abertura do app. Retorna true enquanto baixa.
-// O app só reinicia se a pessoa tocar em "Atualizar agora".
 export function useAtualizacao(ativo = true) {
   const [baixando, setBaixando] = useState(false);
   const ativoRef = useRef(ativo);
@@ -22,10 +18,9 @@ export function useAtualizacao(ativo = true) {
       try {
         const r = await Updates.checkForUpdateAsync();
         if (!r.isAvailable) return;
-        // se a pessoa já entrou no app enquanto verificava, não interrompe:
-        // libera para perguntar de novo quando voltar ao login
+
         if (!ativoRef.current) { jaVerificou.current = false; return; }
-        Alert.alert('Nova atualização', 'Há uma versão nova do MinutoCerto. Deseja atualizar agora?', [
+        Alert.alert('Nova atualização', 'novos recursos. Deseja atualizar agora?', [
           { text: 'Depois', style: 'cancel' },
           {
             text: 'Atualizar agora',
