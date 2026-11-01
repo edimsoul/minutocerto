@@ -716,7 +716,7 @@ setInterval(() => {
 }, 24 * 3600e3).unref();
 
 // Mantém o Render acordado: chama o próprio /health a cada 10 minutos
-const URL_PING = PUBLIC_URL || 'https://minutocerto.onrender.com';
+const URL_PING = PUBLIC_URL || '  ';
 setInterval(() => {
   fetch(`${URL_PING}/health`, { signal: AbortSignal.timeout(15000) })
     .then((r) => console.log('[ping]', r.status))

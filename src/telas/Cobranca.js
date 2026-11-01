@@ -5,33 +5,27 @@ import {
 import { criarPix, statusPix } from '../nuvem';
 import { s } from '../estilos';
 import { cor, LOGO } from '../tema';
-import { brl, calcValor, fmtTempoTexto } from '../util';
+import { brl, fmtTempoTexto } from '../util';
+import { valorItem } from '../valores';
 
-// Formata centavos inteiros como 1.234,56 (a vírgula separa os centavos)
 const fmtCent = (c) => {
   const [i, d] = (c / 100).toFixed(2).split('.');
   return i.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + d;
 };
 
-// Cobrança compartilhada (dinheiro com troco, Pix, juntar itens, encerrar sem cobrança).
-// Não conhece brinquedos nem pula-pula: recebe os itens, o preço e como chamar cada item.
-// O Pix é criado pelo SERVIDOR, usando a conta Mercado Pago conectada no menu (não precisa de token no app).
-export default function Cobranca({ principal, itens, preco, rotuloDe, onFinalizarOutro, onFechar, onPago }) {
+export default function Cobranca({ principal, itens, preco, tabela, rotuloDe, onFinalizarOutro, onFechar, onPago }) {
   const [extras, setExtras] = useState([]);
-  const [modo, setModo] = useState('escolha'); // escolha | dinheiro | pix | semcobranca
-  const [centavos, setCentavos] = useState(0); // dinheiro recebido, em centavos
+  const [modo, setModo] = useState('escolha');
+  const [centavos, setCentavos] = useState(0);
   const [pix, setPix] = useState(null);
   const [carregando, setCarregando] = useState(false);
   const [motivo, setMotivo] = useState('Cortesia');
   const [outro, setOutro] = useState('');
 
-  // outro aparelho já cobrou e liberou este brinquedo: fecha a cobrança
   useEffect(() => {
     if (principal.status === 'livre') onFechar();
-  }, [principal.status]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [principal.status]);
 
-  // o servidor ainda não tem rota para cancelar Pix: aqui só se abandona o QR Code.
-  // O Pix não pago vence sozinho no Mercado Pago.
   const cancelarPixAtual = () => {
     setPix(null);
     setModo('escolha');
@@ -39,7 +33,6 @@ export default function Cobranca({ principal, itens, preco, rotuloDe, onFinaliza
   const fechar = () => {
     onFechar();
   };
-  // botão voltar do Android: volta um passo; na primeira tela, fecha a cobrança
   const voltarAndroid = () => {
     if (modo === 'pix') return cancelarPixAtual();
     if (modo !== 'escolha') return setModo('escolha');
@@ -48,15 +41,13 @@ export default function Cobranca({ principal, itens, preco, rotuloDe, onFinaliza
 
   const outros = itens.filter((v) => v.id !== principal.id && v.status !== 'livre');
   const lista = [principal, ...outros.filter((v) => extras.includes(v.id) && v.status === 'finalizado')];
-  const valor = Math.round(lista.reduce((a, v) => a + calcValor(v.acumulado, preco), 0) * 100) / 100;
+  const valor = Math.round(lista.reduce((a, v) => a + valorItem(v, preco, tabela), 0) * 100) / 100;
 
   const alterna = (id) => setExtras((e) => (e.includes(id) ? e.filter((x) => x !== id) : [...e, id]));
-  // só junta se o servidor aceitou o encerramento (outro aparelho pode ter agido primeiro)
   const juntarAgora = async (v) => {
     if (await onFinalizarOutro(v)) setExtras((e) => [...e, v.id]);
   };
 
-  // dinheiro: tudo em centavos inteiros para não ter erro de arredondamento
   const valorCent = Math.round(valor * 100);
   const rec = centavos / 100;
   const troco = (centavos - valorCent) / 100;
@@ -84,7 +75,6 @@ export default function Cobranca({ principal, itens, preco, rotuloDe, onFinaliza
     setCarregando(false);
   };
 
-  // confere o pagamento a cada 4 segundos
   useEffect(() => {
     if (!pix) return;
     const i = setInterval(async () => {
@@ -114,7 +104,7 @@ export default function Cobranca({ principal, itens, preco, rotuloDe, onFinaliza
               {lista.map((v) => (
                 <View key={v.id} style={est.linhaItem}>
                   <Text style={est.itemTxt}>{rotuloDe(v)} · {fmtTempoTexto(Math.floor(v.acumulado / 1000))}</Text>
-                  <Text style={est.itemVal}>{brl(calcValor(v.acumulado, preco))}</Text>
+                  <Text style={est.itemVal}>{brl(valorItem(v, preco, tabela))}</Text>
                 </View>
               ))}
             </View>

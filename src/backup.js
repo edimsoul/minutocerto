@@ -135,7 +135,6 @@ export async function baixarUltimo() {
   return { ok: true, dados: sanear(j.dados), criadoEm: new Date(r.criadoEm).getTime(), versaoApp: r.versaoApp };
 }
 
-// grava os dados restaurados. Se algo falhar, devolve o estado anterior ("desfazer")
 export async function restaurar(dados) {
   const d = sanear(dados);
   const pares = [
@@ -163,7 +162,6 @@ export async function restaurar(dados) {
   return { desfazer };
 }
 
-// apaga os backups da nuvem (botão "Excluir backup da nuvem")
 export async function apagarBackupNuvem() {
   const token = await sec.get(CHAVE_TOKEN);
   if (!token) return { ok: false, erro: 'Sessão não encontrada.' };
@@ -171,7 +169,6 @@ export async function apagarBackupNuvem() {
   return { ok: r.ok, erro: r.erro };
 }
 
-// exclui TUDO ligado ao e-mail na nuvem: backups, sessões e o cadastro do e-mail
 export async function apagarContaBackup() {
   const token = await sec.get(CHAVE_TOKEN);
   if (!token) return { ok: false, erro: 'Sessão não encontrada.' };
@@ -179,8 +176,6 @@ export async function apagarContaBackup() {
   return { ok: r.ok, erro: r.erro };
 }
 
-// DESATIVADO por segurança: ativar o backup sem confirmar o e-mail deixava qualquer pessoa
-// ocupar o e-mail de outra. O backup agora só liga depois do código enviado por e-mail.
 export async function ativarBackupLivre() {
   return { ok: false, erro: 'Para ativar o backup, confirme seu e-mail com o código que enviamos.' };
 }

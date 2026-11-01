@@ -50,7 +50,7 @@ function Principal() {
   const [restaurando, setRestaurando] = useState(false);
 
   const [bloqueadoAdmin, setBloqueadoAdmin] = useState(false);
-  const [motivo, setMotivo] = useState('bloqueado'); // 'bloqueado' ou 'teste_expirado'
+  const [motivo, setMotivo] = useState('bloqueado');
   const [verificando, setVerificando] = useState(false);
   const avisouFimTeste = useRef(false);
 
@@ -74,19 +74,16 @@ function Principal() {
     VERSAO,
   );
 
-  // Quem se cadastrou antes desta versão tem o e-mail guardado só no cofre do celular.
-  // Copia para o config, para ele ser sincronizado e aparecer no /monitor.
   useEffect(() => {
     if (!configPronta || config.email) return;
     (async () => {
       try {
         const em = await lerEmailCadastrado();
         if (em) setConfig((c) => ({ ...c, email: em }));
-      } catch (e) { /* sem problema */ }
+      } catch (e) {}
     })();
   }, [configPronta, config.email]);
 
-  // --- BOAS-VINDAS (só um aviso; quem controla o teste de 20 dias é o servidor) ---
   useEffect(() => {
     (async () => {
       try {
@@ -97,15 +94,10 @@ function Principal() {
             Alert.alert('Bem-vindo ao MinutoCerto!', 'Você tem 20 dias de teste grátis. Aproveite todos os recursos!');
           }, 1000);
         }
-      } catch (e) { /* sem problema */ }
+      } catch (e) {}
     })();
   }, []);
 
-  // --- VERIFICAR BLOQUEIO / TESTE NO SERVIDOR ---
-  // Usa a mesma identidade do aparelho que o resto do app (src/nuvem.js) e uma consulta (GET)
-  // que não altera nenhum dado. O servidor responde 403 se o aparelho estiver bloqueado ou com o
-  // teste de 20 dias vencido. Nada é apagado do aparelho: quando você desbloqueia no /monitor,
-  // o acesso volta. Retorna true (bloqueado), false (liberado) ou null (não foi possível verificar).
   const checarBloqueio = async () => {
     try {
       const corpo = await planoMP();
@@ -122,10 +114,9 @@ function Principal() {
         const codigo = e.codigo === 'teste_expirado' ? 'teste_expirado' : 'bloqueado';
         setMotivo(codigo);
         setBloqueadoAdmin(true);
-        try { await AsyncStorage.setItem('@minutocerto_bloqueado', codigo); } catch (e2) { /* ignora */ }
+        try { await AsyncStorage.setItem('@minutocerto_bloqueado', codigo); } catch (e2) {}
         return true;
       }
-      // Sem internet ou servidor fora do ar: se já estava bloqueado da última vez, continua bloqueado
       try {
         const marca = await AsyncStorage.getItem('@minutocerto_bloqueado');
         if (marca) {
@@ -133,19 +124,17 @@ function Principal() {
           setBloqueadoAdmin(true);
           return true;
         }
-      } catch (e2) { /* ignora */ }
+      } catch (e2) {}
       return null;
     }
   };
 
-  // Ao entrar (login) e sempre que o app volta para a tela
   useEffect(() => {
     if (!logado) return undefined;
     checarBloqueio();
     const sub = AppState.addEventListener('change', (estado) => {
       if (estado === 'active') checarBloqueio();
     });
-    // também confere a cada 5 minutos, para derrubar quem está com o app aberto
     const timer = setInterval(checarBloqueio, 5 * 60 * 1000);
     return () => { sub.remove(); clearInterval(timer); };
   }, [logado]);
@@ -190,6 +179,8 @@ function Principal() {
         ...config,
         precoMinuto: d.config?.precoMinuto ?? config.precoMinuto,
         precoPula: d.config?.precoPula ?? config.precoPula,
+        precosBrinquedo: d.config?.precosBrinquedo ?? config.precosBrinquedo,
+        precosPacote: d.config?.precosPacote ?? config.precosPacote,
       });
     }
     sincronizarAgora();
@@ -234,7 +225,6 @@ function Principal() {
 
   const aviso = <AvisoBaixando visivel={baixando} />;
 
-  // --- TELA DE BLOQUEIO ---
   if (bloqueadoAdmin) {
     return (
       <View style={[s.centro, { padding: 24 }]}>

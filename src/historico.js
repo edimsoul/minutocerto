@@ -1,12 +1,13 @@
 import { usePersistente } from './hooks';
 import { CHAVES } from './armazenamento';
-import { calcValor, arred2 } from './util';
+import { arred2 } from './util';
+import { valorItem } from './valores';
 
-export function montarHistorico(lista, metodo, extra, { rotuloDe, preco, modo }) {
+export function montarHistorico(lista, metodo, extra, { rotuloDe, preco, tabela, modo }) {
   const lancamentos = lista.map((v) => ({
     numero: v.numero, tipo: v.tipo, rotulo: rotuloDe(v),
     segundos: Math.floor(v.acumulado / 1000),
-    valor: metodo === 'Sem cobrança' ? 0 : calcValor(v.acumulado, preco),
+    valor: metodo === 'Sem cobrança' ? 0 : valorItem(v, preco, tabela),
   }));
   const total = arred2(lancamentos.reduce((a, i) => a + i.valor, 0));
   return {

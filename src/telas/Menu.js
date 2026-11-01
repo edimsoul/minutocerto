@@ -47,7 +47,7 @@ function Corpo({ modo, escolhido, onFechar, onModo, onIr, onSair }) {
       ? [{ k: 'cadastro', n: 'Cadastro', d: 'Brinquedos e QR Code', icone: 'qrcode-scan', c: cor.azul }]
       : []),
     { k: 'relatorio', n: 'Relatório', d: 'Ganhos e PDF', icone: 'chart-box-outline', c: cor.tinta },
-    { k: 'valor', n: 'Valor do minuto', d: 'Preço por minuto', icone: 'currency-brl', c: cor.ambar },
+    { k: 'valor', n: 'Ajuste de Valores', d: 'Valores de Pacotes', icone: 'currency-brl', c: cor.ambar },
     { k: 'mp', n: 'Mercado Pago', d: 'Pix e token', icone: 'qrcode', c: cor.azul },
     { k: 'acesso', n: 'Usuário e senha', d: 'Seu acesso', icone: 'account-lock', c: cor.tinta },
     { k: 'backup', n: 'Backup', d: 'Salvar na nuvem', icone: 'cloud-upload-outline', c: cor.azul },

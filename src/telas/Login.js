@@ -19,7 +19,7 @@ const PH = cor.suave;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SENHA_MIN = 6;
 const normalizar = (v) => String(v || '').trim().toLowerCase();
-// o tamanho do código depende da configuração do Supabase; o servidor aceita de 6 a 10 dígitos
+
 const codigoOk = (c) => /^\d{6,8}$/.test(String(c).trim());
 const MSG_CODIGO = 'Digite o código que chegou no e-mail (6 a 8 dígitos).';
 

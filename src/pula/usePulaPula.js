@@ -15,8 +15,11 @@ export function usePulaPula() {
   const atualiza = (id, m) => setItens((vs) => vs.map((v) => (v.id === id ? { ...v, ...m } : v)));
   const achar = (v) => ref.current.find((x) => x.id === v.id) || v;
 
-  // com pacote, o mínimo cobrado é o tempo do pacote
-  const tempoFinal = (v) => Math.max(decorrido(v, Date.now()), v.pacote ? v.pacote * 60000 : 0);
+  const tempoFinal = (v, modo) => {
+    const ms = decorrido(v, Date.now());
+    if (modo === 'corrido') return ms;
+    return Math.max(ms, v.pacote ? v.pacote * 60000 : 0);
+  };
 
   const agir = (v, tipo, dados, local, pos, suave) =>
     executar({
@@ -27,12 +30,18 @@ export function usePulaPula() {
 
   const remover = (id) => setItens((vs) => vs.filter((v) => v.id !== id));
 
-  const encerrar = (v) =>
-    agir(
+  const encerrar = (v, opcoes) => {
+    const modo = opcoes?.modoCobranca;
+    return agir(
       v, 'encerrar', {},
-      () => atualiza(v.id, { status: 'finalizado', acumulado: tempoFinal(v), inicio: 0 }),
-      (p) => ({ ...p, acumulado: Math.max(p.acumulado, achar(v).pacote ? achar(v).pacote * 60000 : 0) }),
+      () => atualiza(v.id, { status: 'finalizado', acumulado: tempoFinal(v, modo), inicio: 0 }),
+      (p) => {
+        if (modo === 'corrido') return p;
+        const a = achar(v);
+        return { ...p, acumulado: Math.max(p.acumulado, a.pacote ? a.pacote * 60000 : 0) };
+      },
     );
+  };
 
   const deServidor = (v, i) => {
     const p = patchDoServidor(i);
@@ -76,8 +85,7 @@ export function usePulaPula() {
       agir(v, 'pausar', {}, () => atualiza(v.id, { status: 'pausado', acumulado: decorrido(v, Date.now()), inicio: 0 })),
     retomar: (v) => agir(v, 'retomar', {}, () => atualiza(v.id, { status: 'rodando', inicio: Date.now() })),
     finalizar: encerrar,
-    finalizarOutro: encerrar,
-    // depois do pagamento a pessoa sai da lista
+    finalizarOutro: (v) => encerrar(v),
     liberar: async (ids, hist) => {
       const h = hist && JSON.stringify(hist).length < 3500 ? hist : null;
       for (let n = 0; n < ids.length; n++) {

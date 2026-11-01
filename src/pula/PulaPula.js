@@ -5,7 +5,8 @@ import Cobranca from '../telas/Cobranca';
 import Botao from '../componentes/Botao';
 import { s } from '../estilos';
 import { cor, ICONES } from '../tema';
-import { brl, calcValor, decorrido, fmtTempo } from '../util';
+import { brl, decorrido, fmtTempo } from '../util';
+import { valorPacote, valorACobrar } from '../valores';
 import { useAgora } from '../hooks';
 import { montarHistorico } from '../historico';
 
@@ -13,9 +14,8 @@ const STATUS = { rodando: 'Brincando', pausado: 'Pausado', finalizado: 'Aguardan
 const COR_STATUS = { rodando: cor.verde, pausado: cor.ambar, finalizado: cor.vermelho };
 const rotuloPessoa = (v) => v.numero;
 
-const PREDEFINIDOS = [5, 10, 15];
+export const PREDEFINIDOS = [5, 10, 15, 20, 25, 30];
 const PADRAO_VIBRACAO = [0, 600, 300, 600, 300, 600];
-const TOLERANCIA_MIN = 2;
 
 const FUNDOS = [
   '#EAF3FC',
@@ -31,32 +31,12 @@ const FUNDO_ESGOTADO = '#FDECEC';
 const TEXTO_INPUT = { color: '#000' };
 const COR_PLACEHOLDER = '#6b7280';
 
-function valorACobrar(v, agora, preco, modoCobranca) {
-  const ms = decorrido(v, agora);
-  const pacote = v.pacote;
-
-  if (!pacote) return calcValor(ms, preco);
-
-  const pacoteMs = pacote * 60000;
-  const toleranciaMs = TOLERANCIA_MIN * 60000;
-
-  if (ms < pacoteMs) {
-    if (modoCobranca === 'integral') return calcValor(pacoteMs, preco);
-    return calcValor(ms, preco);
-  }
-
-  if (ms <= pacoteMs + toleranciaMs) return calcValor(pacoteMs, preco);
-
-  const excedenteMs = ms - (pacoteMs + toleranciaMs);
-  return calcValor(pacoteMs, preco) + calcValor(excedenteMs, preco);
-}
-
 function precisaEscolherCobranca(v, agora) {
   if (!v.pacote) return false;
   return decorrido(v, agora) < v.pacote * 60000;
 }
 
-function SeletorTempo({ valor, onChange }) {
+function SeletorTempo({ valor, onChange, preco, tabela }) {
   const ehOutro = valor != null && !PREDEFINIDOS.includes(valor);
   const [outro, setOutro] = useState(ehOutro);
   const [txt, setTxt] = useState(ehOutro ? String(valor) : '');
@@ -82,7 +62,11 @@ function SeletorTempo({ valor, onChange }) {
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
         {chip('Livre', !outro && valor == null, () => { setOutro(false); onChange(null); })}
         {PREDEFINIDOS.map((m) =>
-          chip(`${m} min`, !outro && valor === m, () => { setOutro(false); onChange(m); })
+          chip(
+            `${m} min · ${brl(valorPacote(m, preco, tabela))}`,
+            !outro && valor === m,
+            () => { setOutro(false); onChange(m); }
+          )
         )}
         {chip('Outro', outro, () => {
           setOutro(true);
@@ -115,9 +99,7 @@ function SeletorTempo({ valor, onChange }) {
 export default function PulaPula({ pula, config, onPagamento }) {
   const agora = useAgora();
   const [nome, setNome] = useState('');
-  // NOVO: controla o modal de escolha de tempo (aberto ao tocar em Iniciar)
   const [escolhendoTempo, setEscolhendoTempo] = useState(false);
-  // Tempo escolhido DENTRO do modal
   const [pacoteModal, setPacoteModal] = useState(null);
 
   const [cobrancaId, setCobrancaId] = useState(null);
@@ -125,12 +107,11 @@ export default function PulaPula({ pula, config, onPagamento }) {
   const [avisos, setAvisos] = useState([]);
   const avisados = useRef(new Set());
 
-  // Escolha de cobrança por id: { [id]: 'integral' | 'corrido' }
   const [modoCobranca, setModoCobranca] = useState({});
-  // Id da pessoa aguardando decisão de cobrança antecipada
   const [decidindoId, setDecidindoId] = useState(null);
 
   const preco = config.precoPula;
+  const tabela = config.precosPacote;
   const cobrando = pula.itens.find((v) => v.id === cobrancaId);
   const editando = pula.itens.find((v) => v.id === editandoId);
   const decidindo = pula.itens.find((v) => v.id === decidindoId);
@@ -191,9 +172,9 @@ export default function PulaPula({ pula, config, onPagamento }) {
     finalizar(v);
   };
 
-  const finalizar = async (v) => {
-    const modo = modoCobranca[v.id];
-    if (await pula.finalizar(v, { modoCobranca: modo, preco, agora })) setCobrancaId(v.id);
+  const finalizar = async (v, modoForcado) => {
+    const modo = modoForcado ?? modoCobranca[v.id];
+    if (await pula.finalizar(v, { modoCobranca: modo, preco, tabela, agora })) setCobrancaId(v.id);
   };
 
   const escolherModoCobranca = (modo) => {
@@ -201,7 +182,7 @@ export default function PulaPula({ pula, config, onPagamento }) {
     if (!v) return;
     setModoCobranca((m) => ({ ...m, [v.id]: modo }));
     setDecidindoId(null);
-    finalizar(v);
+    finalizar(v, modo);
   };
 
   const cancelarDecisao = () => setDecidindoId(null);
@@ -264,7 +245,7 @@ export default function PulaPula({ pula, config, onPagamento }) {
           const temPacote = pacoteMs > 0;
           const esgotado = temPacote && ms >= pacoteMs;
           const restante = Math.max(0, pacoteMs - ms);
-          const valorAoVivo = valorACobrar(v, agora, preco);
+          const valorAoVivo = valorACobrar(v, agora, preco, modoCobranca[v.id], tabela);
           const alerta = esgotado && v.status !== 'finalizado';
           const corBorda = alerta ? cor.vermelho : COR_STATUS[v.status];
           const fundo = alerta ? FUNDO_ESGOTADO : FUNDOS[i % FUNDOS.length];
@@ -276,7 +257,7 @@ export default function PulaPula({ pula, config, onPagamento }) {
                   <MaterialCommunityIcons name={ICONES['Pula-pula']} size={32} color={cor.branco} />
                 </View>
                 <View style={{ flex: 1, marginLeft: 12 }}>
-                  <Text style={s.tipo}>{rotuloPessoa(v)}</Text>
+                  <Text style={{ fontSize: 30, fontWeight: '900', color: cor.tinta }} numberOfLines={1} adjustsFontSizeToFit>{rotuloPessoa(v)}</Text>
                   <Text style={[s.status, { color: COR_STATUS[v.status] }]}>{STATUS[v.status]}</Text>
                   <Text style={{ color: cor.suave, fontWeight: '600', marginTop: 2 }}>
                     {temPacote ? `Pacote de ${v.pacote} min` : 'Livre (por minutos)'}
@@ -324,7 +305,6 @@ export default function PulaPula({ pula, config, onPagamento }) {
         })}
       </ScrollView>
 
-      {/* NOVO: modal de escolha de tempo ao iniciar */}
       <Modal visible={escolhendoTempo} transparent animationType="fade" onRequestClose={cancelarTempo}>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -340,7 +320,7 @@ export default function PulaPula({ pula, config, onPagamento }) {
                 Escolha quanto tempo essa pessoa vai brincar.
               </Text>
 
-              <SeletorTempo valor={pacoteModal} onChange={setPacoteModal} />
+              <SeletorTempo valor={pacoteModal} onChange={setPacoteModal} preco={preco} tabela={tabela} />
 
               <TouchableOpacity
                 onPress={confirmarTempo}
@@ -370,7 +350,6 @@ export default function PulaPula({ pula, config, onPagamento }) {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Modal de escolha de cobrança antecipada */}
       <Modal visible={!!decidindo} transparent animationType="fade" onRequestClose={cancelarDecisao}>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -403,7 +382,7 @@ export default function PulaPula({ pula, config, onPagamento }) {
                   <View style={{ flex: 1, marginLeft: 12 }}>
                     <Text style={{ fontSize: 16, fontWeight: '800', color: '#000' }}>Cobrar valor integral</Text>
                     <Text style={{ fontSize: 12, color: cor.suave, marginTop: 2 }}>
-                      {brl(calcValor(decidindo.pacote * 60000, preco))} · pacote contratado
+                      {brl(valorPacote(decidindo.pacote, preco, tabela))} · pacote contratado
                     </Text>
                   </View>
                 </TouchableOpacity>
@@ -425,7 +404,7 @@ export default function PulaPula({ pula, config, onPagamento }) {
                   <View style={{ flex: 1, marginLeft: 12 }}>
                     <Text style={{ fontSize: 16, fontWeight: '800', color: '#000' }}>Cobrar só o tempo corrido</Text>
                     <Text style={{ fontSize: 12, color: cor.suave, marginTop: 2 }}>
-                      {brl(calcValor(decorrido(decidindo, agora), preco))} · minutos usados
+                      {brl(valorACobrar(decidindo, agora, preco, 'corrido', tabela))} · minutos usados
                     </Text>
                   </View>
                 </TouchableOpacity>
@@ -465,6 +444,8 @@ export default function PulaPula({ pula, config, onPagamento }) {
                   key={editando.id}
                   valor={editando.pacote || null}
                   onChange={(m) => pula.alterarPacote(editando, m)}
+                  preco={preco}
+                  tabela={tabela}
                 />
                 <TouchableOpacity
                   onPress={() => setEditandoId(null)}
@@ -488,12 +469,12 @@ export default function PulaPula({ pula, config, onPagamento }) {
 
       {cobrando && (
         <Cobranca
-          principal={cobrando} itens={pula.itens} preco={preco} token={config.token}
+          principal={cobrando} itens={pula.itens} preco={preco} tabela={tabela} token={config.token}
           rotuloDe={rotuloPessoa}
           onFinalizarOutro={pula.finalizarOutro}
           onFechar={() => setCobrancaId(null)}
           onPago={(metodo, lista, extra) => {
-            const h = montarHistorico(lista, metodo, extra, { rotuloDe: rotuloPessoa, preco, modo: 'pula' });
+            const h = montarHistorico(lista, metodo, extra, { rotuloDe: rotuloPessoa, preco, tabela, modo: 'pula' });
             onPagamento(h);
             pula.liberar(lista.map((v) => v.id), h);
             setCobrancaId(null);

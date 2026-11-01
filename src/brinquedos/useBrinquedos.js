@@ -45,8 +45,23 @@ export function useBrinquedos() {
       aplicar: (p) => atualiza(v.id, pos ? pos(p) : p),
     });
 
-  const parar = (v, tipo) =>
-    agir(v, tipo, {}, () => atualiza(v.id, { status: 'finalizado', acumulado: decorrido(v, Date.now()), inicio: 0 }));
+  const minimoMs = (v) => {
+    const a = ref.current.find((x) => x.id === v.id) || v;
+    return a.limite ? a.limite * 60000 : 0;
+  };
+
+  const parar = (v, tipo, modo) => {
+    const integral = modo === 'integral';
+    return agir(
+      v, tipo, {},
+      () => atualiza(v.id, {
+        status: 'finalizado',
+        acumulado: integral ? Math.max(decorrido(v, Date.now()), minimoMs(v)) : decorrido(v, Date.now()),
+        inicio: 0,
+      }),
+      integral ? (p) => ({ ...p, acumulado: Math.max(p.acumulado, minimoMs(v)) }) : undefined,
+    );
+  };
 
   return {
     itens, pronto,
@@ -63,9 +78,8 @@ export function useBrinquedos() {
     pausar: (v) =>
       agir(v, 'pausar', {}, () => atualiza(v.id, { status: 'pausado', acumulado: decorrido(v, Date.now()), inicio: 0 })),
     retomar: (v) => agir(v, 'retomar', {}, () => atualiza(v.id, { status: 'rodando', inicio: Date.now() })),
-    finalizar: (v) => parar(v, 'encerrar'),
+    finalizar: (v, opcoes) => parar(v, 'encerrar', opcoes?.modoCobranca),
     finalizarOutro: (v) => parar(v, 'encerrar'),
-    // depois do pagamento o brinquedo volta a ficar livre; "hist" vai para o relatório do outro aparelho
     liberar: async (ids, hist) => {
       const h = hist && JSON.stringify(hist).length < 3500 ? hist : null;
       for (let n = 0; n < ids.length; n++) {
@@ -74,7 +88,6 @@ export function useBrinquedos() {
         await agir(v, 'liberar', n === 0 && h ? { hist: h } : {}, () => atualiza(v.id, LIVRE), (p) => ({ ...p, limite: null }), true);
       }
     },
-    // traz os brinquedos cadastrados no aparelho principal (seq zerado: o servidor corrige no próximo ciclo)
     importar: (lista) =>
       setItens((vs) => {
         const ids = new Set(vs.map((v) => v.id));
@@ -83,7 +96,6 @@ export function useBrinquedos() {
           .map((b) => ({ ...b, ...LIVRE, seq: 0 }));
         return novos.length ? [...vs, ...novos] : vs;
       }),
-    // aplica o estado vindo do servidor (outros aparelhos)
     reconciliar: (srv) =>
       setItens((vs) => {
         let mudou = false;

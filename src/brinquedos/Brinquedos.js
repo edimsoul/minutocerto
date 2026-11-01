@@ -6,9 +6,10 @@ import Botao from '../componentes/Botao';
 import LeitorQR from './LeitorQR';
 import { s } from '../estilos';
 import { cor } from '../tema';
-import { brl, calcValor, decorrido, fmtTempo } from '../util';
+import { brl, decorrido, fmtTempo } from '../util';
 import { useAgora } from '../hooks';
 import { montarHistorico } from '../historico';
+import { valorPacote, valorACobrar, TOLERANCIA_MIN } from '../valores';
 import { rotuloBrinquedo, iconeDe, hexDaCor, ordenar } from './brinquedo';
 
 const STATUS = { livre: 'Livre', rodando: 'Em uso', pausado: 'Pausado', finalizado: 'Aguardando pagamento' };
@@ -17,40 +18,8 @@ const COR_STATUS = { livre: cor.suave, rodando: cor.verde, pausado: cor.ambar, f
 const LINHA_1 = [10, 15, 20];
 const LINHA_2 = [25, 30];
 
-// Tolerância: encerrar até limite + 2 min cobra o valor do tempo contratado.
-const TOLERANCIA_MIN = 2;
-
 const PAD_JANELA = { padding: 20, paddingBottom: 120 };
 
-// Calcula o valor a cobrar de um brinquedo.
-// modoCobranca (opcional) só é usado quando o operador foi perguntado
-// (encerramento antecipado). Pode ser 'integral' ou 'corrido'.
-function valorACobrar(v, agora, preco, modoCobranca) {
-  const ms = decorrido(v, agora);
-  const limite = v.limite;
-
-  // Tempo livre: sempre proporcional corrido.
-  if (!limite) return calcValor(ms, preco);
-
-  const limiteMs = limite * 60000;
-  const toleranciaMs = TOLERANCIA_MIN * 60000;
-
-  // Encerrou antes do tempo contratado → o operador já foi perguntado.
-  if (ms < limiteMs) {
-    if (modoCobranca === 'integral') return calcValor(limiteMs, preco);
-    // 'corrido' ou indefinido → proporcional do tempo usado
-    return calcValor(ms, preco);
-  }
-
-  // Dentro da tolerância (limite até limite + 2 min) → valor integral do tempo contratado.
-  if (ms <= limiteMs + toleranciaMs) return calcValor(limiteMs, preco);
-
-  // Passou da tolerância → valor contratado + proporcional do que excedeu a tolerância.
-  const excedenteMs = ms - (limiteMs + toleranciaMs);
-  return calcValor(limiteMs, preco) + calcValor(excedenteMs, preco);
-}
-
-// Só pergunta quando o brinquedo tem tempo fixo e foi encerrado ANTES do tempo contratado.
 function precisaEscolherCobranca(v, agora) {
   if (!v.limite) return false;
   return decorrido(v, agora) < v.limite * 60000;
@@ -74,7 +43,7 @@ function AcoesBrinquedo({ v, brinq, aoIniciar, aoEncerrar, aoCobrar, depois }) {
   );
 }
 
-function CartaoBrinquedo({ v, agora, preco, brinq, limiteMin, aoIniciar, aoEncerrar, aoCobrar, depois }) {
+function CartaoBrinquedo({ v, agora, preco, tabela, brinq, limiteMin, aoIniciar, aoEncerrar, aoCobrar, depois }) {
   const ms = decorrido(v, agora);
   const temLimite = !!limiteMin && v.status !== 'livre';
   const restante = temLimite ? limiteMin * 60000 - ms : 0;
@@ -113,7 +82,7 @@ function CartaoBrinquedo({ v, agora, preco, brinq, limiteMin, aoIniciar, aoEncer
         {v.status !== 'livre' && (
           <View style={{ alignItems: 'flex-end' }}>
             <Text style={s.relogio}>{fmtTempo(ms)}</Text>
-            <Text style={s.valorAoVivo}>{brl(valorACobrar(v, agora, preco))}</Text>
+            <Text style={s.valorAoVivo}>{brl(valorACobrar(v, agora, preco, undefined, tabela))}</Text>
           </View>
         )}
       </View>
@@ -143,13 +112,12 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
   const [lote, setLote] = useState([]);
   const leuQRRef = useRef(false);
 
-  // Escolha de cobrança por id: { [id]: 'integral' | 'corrido' }
   const [modoCobranca, setModoCobranca] = useState({});
-  // Id do brinquedo aguardando decisão de cobrança antecipada
   const [decidindoId, setDecidindoId] = useState(null);
 
   const { itens } = brinq;
   const preco = config.precoMinuto;
+  const tabela = config.precosBrinquedo;
   const ativos = ordenar(itens.filter((v) => v.status !== 'livre'));
   const ficha = itens.find((v) => v.id === fichaId);
   const cobrando = itens.find((v) => v.id === cobrancaId);
@@ -159,7 +127,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
   const noLote = lote.map((id) => itens.find((v) => v.id === id)).filter(Boolean);
   const totalLote = noLote.reduce((t, v) => {
     const modo = modoCobranca[v.id];
-    return t + valorACobrar(v, agora, preco, modo);
+    return t + valorACobrar(v, agora, preco, modo, tabela);
   }, 0);
 
   const achadosEnc = numeroEnc.trim()
@@ -178,7 +146,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
         Alert.alert('Tempo esgotado', `${rotuloBrinquedo(v)} completou os ${lim} minutos.`);
       }
     });
-  }, [agora]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [agora]);
 
   const limparLimites = (ids) => ids.forEach((id) => avisados.current.delete(id));
 
@@ -279,8 +247,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
     const feitos = [];
     for (const v of noLote) {
       const modo = modoCobranca[v.id];
-      // Repassa a forma de cobrança para o brinq.finalizar (se suportar)
-      if (await brinq.finalizar(v, { modoCobranca: modo, preco, agora })) feitos.push(v);
+      if (await brinq.finalizar(v, { modoCobranca: modo, preco, tabela, agora })) feitos.push(v);
     }
     setLote([]);
     setModoCobranca({});
@@ -300,7 +267,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
       )}
       <Text style={e.tempoNum}>{min}</Text>
       <Text style={e.tempoUn}>min</Text>
-      <Text style={e.tempoValor}>{brl(calcValor(min * 60000, preco))}</Text>
+      <Text style={e.tempoValor}>{brl(valorPacote(min, preco, tabela))}</Text>
     </TouchableOpacity>
   );
 
@@ -333,7 +300,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
 
         {ativos.map((v) => (
           <CartaoBrinquedo
-            key={v.id} v={v} agora={agora} preco={preco} brinq={brinq} limiteMin={v.limite}
+            key={v.id} v={v} agora={agora} preco={preco} tabela={tabela} brinq={brinq} limiteMin={v.limite}
             aoIniciar={aoIniciar} aoEncerrar={aoEncerrar} aoCobrar={aoCobrar}
           />
         ))}
@@ -349,7 +316,6 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
         onLido={aoLerQREncerrar} onFechar={aoFecharCameraEnc}
       />
 
-      {/* Modal de escolha de cobrança antecipada */}
       <Modal transparent animationType="slide" visible={!!decidindo} onRequestClose={cancelarDecisao}>
         <View style={s.fundoModal}>
           <View style={s.modal}>
@@ -369,7 +335,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
                 <View style={{ flex: 1, marginLeft: 12 }}>
                   <Text style={e.opcaoTitulo}>Cobrar valor integral</Text>
                   <Text style={e.opcaoSub}>
-                    {decidindo ? brl(calcValor(decidindo.limite * 60000, preco)) : ''} · tempo contratado
+                    {decidindo ? brl(valorPacote(decidindo.limite, preco, tabela)) : ''} · tempo contratado
                   </Text>
                 </View>
               </TouchableOpacity>
@@ -382,7 +348,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
                 <View style={{ flex: 1, marginLeft: 12 }}>
                   <Text style={e.opcaoTitulo}>Cobrar só o tempo corrido</Text>
                   <Text style={e.opcaoSub}>
-                    {decidindo ? brl(calcValor(decorrido(decidindo, agora), preco)) : ''} · minutos usados
+                    {decidindo ? brl(valorACobrar(decidindo, agora, preco, 'corrido', tabela)) : ''} · minutos usados
                   </Text>
                 </View>
               </TouchableOpacity>
@@ -459,7 +425,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
                     <Text style={s.tipo}>{rotuloBrinquedo(v)}{v.cor ? ` · ${v.cor}` : ''}</Text>
                     <Text style={s.sub2}>{STATUS[v.status]} · {fmtTempo(ms)}</Text>
                   </View>
-                  <Text style={s.valorAoVivo}>{brl(valorACobrar(v, agora, preco))}</Text>
+                  <Text style={s.valorAoVivo}>{brl(valorACobrar(v, agora, preco, undefined, tabela))}</Text>
                 </TouchableOpacity>
               );
             })}
@@ -488,7 +454,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
               {noLote.map((v) => {
                 const ms = decorrido(v, agora);
                 const modo = modoCobranca[v.id];
-                const valor = valorACobrar(v, agora, preco, modo);
+                const valor = valorACobrar(v, agora, preco, modo, tabela);
                 return (
                   <View key={v.id} style={e.achado}>
                     <MaterialCommunityIcons name={iconeDe(v)} size={28} color={cor.tinta} />
@@ -538,7 +504,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
               <Text style={[s.modalTitulo, { marginBottom: 12 }]}>Brinquedo encontrado</Text>
               {ficha && (
                 <CartaoBrinquedo
-                  v={ficha} agora={agora} preco={preco} brinq={brinq} limiteMin={ficha.limite}
+                  v={ficha} agora={agora} preco={preco} tabela={tabela} brinq={brinq} limiteMin={ficha.limite}
                   aoIniciar={aoIniciar} aoEncerrar={aoEncerrar} aoCobrar={aoCobrar}
                   depois={() => setFichaId(null)}
                 />
@@ -576,12 +542,12 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
 
       {cobrando && (
         <Cobranca
-          principal={cobrando} itens={itens} preco={preco} token={config.token}
+          principal={cobrando} itens={itens} preco={preco} tabela={tabela} token={config.token}
           rotuloDe={rotuloBrinquedo}
           onFinalizarOutro={brinq.finalizarOutro}
           onFechar={() => setCobrancaId(null)}
           onPago={(metodo, lista, extra) => {
-            const h = montarHistorico(lista, metodo, extra, { rotuloDe: rotuloBrinquedo, preco, modo: 'veiculos' });
+            const h = montarHistorico(lista, metodo, extra, { rotuloDe: rotuloBrinquedo, preco, tabela, modo: 'veiculos' });
             onPagamento(h);
             brinq.liberar(lista.map((v) => v.id), h);
             limparLimites(lista.map((v) => v.id));
@@ -639,7 +605,6 @@ const e = StyleSheet.create({
   },
   botaoSeguirTxt: { color: '#ffffff', fontSize: 17, fontWeight: '800' },
 
-  // Novos estilos para o modal de escolha de cobrança
   opcaoCobranca: {
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: cor.fundo, borderRadius: 12,
