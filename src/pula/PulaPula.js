@@ -31,9 +31,8 @@ const FUNDO_ESGOTADO = '#FDECEC';
 const TEXTO_INPUT = { color: '#000' };
 const COR_PLACEHOLDER = '#6b7280';
 
-function precisaEscolherCobranca(v, agora) {
-  if (!v.pacote) return false;
-  return decorrido(v, agora) < v.pacote * 60000;
+function precisaEscolherCobranca(v) {
+  return !!v.pacote;
 }
 
 function SeletorTempo({ valor, onChange, preco, tabela }) {
@@ -93,6 +92,59 @@ function SeletorTempo({ valor, onChange, preco, tabela }) {
         </View>
       )}
     </View>
+  );
+}
+
+function OpcaoCobranca({ icone, titulo, detalhe, valor, tom, destaque, onPress }) {
+  return (
+    <TouchableOpacity
+      activeOpacity={0.85}
+      onPress={onPress}
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: destaque ? tom + '14' : '#fff',
+        borderRadius: 14,
+        paddingVertical: 14,
+        paddingHorizontal: 14,
+        borderWidth: destaque ? 2 : 1,
+        borderColor: destaque ? tom : '#e5e7eb',
+        marginTop: 10,
+      }}>
+      <View
+        style={{
+          width: 42,
+          height: 42,
+          borderRadius: 21,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: destaque ? tom : '#f3f4f6',
+        }}>
+        <MaterialCommunityIcons name={icone} size={22} color={destaque ? '#fff' : cor.suave} />
+      </View>
+
+      <View style={{ flex: 1, marginLeft: 12 }}>
+        <Text style={{ fontSize: 15, fontWeight: '800', color: destaque ? '#000' : '#374151' }}>{titulo}</Text>
+        <Text style={{ fontSize: 12, color: cor.suave, marginTop: 2 }}>{detalhe}</Text>
+        {destaque && (
+          <View
+            style={{
+              alignSelf: 'flex-start',
+              marginTop: 6,
+              backgroundColor: tom,
+              borderRadius: 10,
+              paddingHorizontal: 8,
+              paddingVertical: 2,
+            }}>
+            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.3 }}>SUGERIDO</Text>
+          </View>
+        )}
+      </View>
+
+      <Text style={{ fontSize: destaque ? 18 : 16, fontWeight: '800', color: destaque ? tom : '#6b7280' }}>
+        {brl(valor)}
+      </Text>
+    </TouchableOpacity>
   );
 }
 
@@ -165,7 +217,7 @@ export default function PulaPula({ pula, config, onPagamento }) {
   };
 
   const fim = (v) => {
-    if (precisaEscolherCobranca(v, agora)) {
+    if (precisaEscolherCobranca(v)) {
       setDecidindoId(v.id);
       return;
     }
@@ -217,7 +269,7 @@ export default function PulaPula({ pula, config, onPagamento }) {
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <TextInput
               style={[s.input, TEXTO_INPUT, { flex: 1 }]}
-              placeholder="Nome (ex: Ana)"
+              placeholder="ex: Ana"
               placeholderTextColor={COR_PLACEHOLDER}
               value={nome}
               onChangeText={setNome}
@@ -357,70 +409,46 @@ export default function PulaPula({ pula, config, onPagamento }) {
           <ScrollView
             contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 20 }}
             keyboardShouldPersistTaps="handled">
-            {decidindo && (
-              <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 18 }}>
-                <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 4, color: '#000' }}>
-                  Encerramento antecipado
-                </Text>
-                <Text style={{ color: cor.suave, marginBottom: 16 }}>
-                  {decidindo.numero} · {fmtTempo(decorrido(decidindo, agora))} corridos de {decidindo.pacote} min
-                </Text>
+            {decidindo && (() => {
+              const esgotado = decorrido(decidindo, agora) >= decidindo.pacote * 60000;
+              return (
+                <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 18 }}>
+                  <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 4, color: '#000' }}>
+                    {esgotado ? 'Tempo esgotado' : 'Encerramento antecipado'}
+                  </Text>
+                  <Text style={{ color: cor.suave, marginBottom: 6 }}>
+                    {decidindo.numero} · {fmtTempo(decorrido(decidindo, agora))} de {decidindo.pacote} min
+                  </Text>
 
-                <TouchableOpacity
-                  activeOpacity={0.85}
-                  onPress={() => escolherModoCobranca('integral')}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    backgroundColor: '#F4F8FE',
-                    borderRadius: 12,
-                    padding: 14,
-                    borderWidth: 2,
-                    borderColor: cor.azul,
-                  }}>
-                  <MaterialCommunityIcons name="cash-multiple" size={28} color={cor.azul} />
-                  <View style={{ flex: 1, marginLeft: 12 }}>
-                    <Text style={{ fontSize: 16, fontWeight: '800', color: '#000' }}>Cobrar valor integral</Text>
-                    <Text style={{ fontSize: 12, color: cor.suave, marginTop: 2 }}>
-                      {brl(valorPacote(decidindo.pacote, preco, tabela))} · pacote contratado
-                    </Text>
-                  </View>
-                </TouchableOpacity>
+                  <OpcaoCobranca
+                    icone="cash-multiple"
+                    titulo="Valor integral"
+                    detalhe="Pacote contratado"
+                    valor={valorPacote(decidindo.pacote, preco, tabela)}
+                    tom={cor.azul}
+                    destaque={esgotado}
+                    onPress={() => escolherModoCobranca('integral')}
+                  />
 
-                <TouchableOpacity
-                  activeOpacity={0.85}
-                  onPress={() => escolherModoCobranca('corrido')}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    backgroundColor: '#EEF8F1',
-                    borderRadius: 12,
-                    padding: 14,
-                    borderWidth: 2,
-                    borderColor: cor.verde,
-                    marginTop: 10,
-                  }}>
-                  <MaterialCommunityIcons name="timer-sand" size={28} color={cor.verde} />
-                  <View style={{ flex: 1, marginLeft: 12 }}>
-                    <Text style={{ fontSize: 16, fontWeight: '800', color: '#000' }}>Cobrar só o tempo corrido</Text>
-                    <Text style={{ fontSize: 12, color: cor.suave, marginTop: 2 }}>
-                      {brl(valorACobrar(decidindo, agora, preco, 'corrido', tabela))} · minutos usados
-                    </Text>
-                  </View>
-                </TouchableOpacity>
+                  <OpcaoCobranca
+                    icone="timer-sand"
+                    titulo="Só o tempo corrido"
+                    detalhe="Minutos realmente usados"
+                    valor={valorACobrar(decidindo, agora, preco, 'corrido', tabela)}
+                    tom={cor.verde}
+                    destaque={!esgotado}
+                    onPress={() => escolherModoCobranca('corrido')}
+                  />
 
-                <TouchableOpacity
-                  onPress={cancelarDecisao}
-                  activeOpacity={0.8}
-                  style={{
-                    marginTop: 16,
-                    alignItems: 'center',
-                    paddingVertical: 12,
-                  }}>
-                  <Text style={{ color: cor.suave, fontWeight: '700' }}>Cancelar</Text>
-                </TouchableOpacity>
-              </View>
-            )}
+                  <TouchableOpacity
+                    onPress={cancelarDecisao}
+                    activeOpacity={0.8}
+                    style={{ marginTop: 14, alignItems: 'center', paddingVertical: 10 }}>
+                    <Text style={{ color: cor.suave, fontWeight: '700' }}>Cancelar</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })()}
           </ScrollView>
         </KeyboardAvoidingView>
       </Modal>

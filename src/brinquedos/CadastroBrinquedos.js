@@ -120,11 +120,11 @@ export default function CadastroBrinquedos({ brinq }) {
           ) : (
             <TouchableOpacity style={e.btnLer} onPress={() => setLendo(true)}>
               <MaterialCommunityIcons name="qrcode-scan" size={22} color={cor.azul} />
-              <Text style={e.btnLerTxt}>Ler QR Code da etiqueta</Text>
+              <Text style={e.btnLerTxt}>Ler Código da etiqueta</Text>
             </TouchableOpacity>
           )}
           <Text style={s.ajuda}>
-            Sem etiqueta? Deixe sem ler: ao cadastrar, o app gera um QR Code para você imprimir e colar no brinquedo.
+            Sem etiqueta? Deixe sem ler: ao cadastrar, o app gera um código para você imprimir e colar no brinquedo.
           </Text>
 
           <AreaTeclado contentStyle={{ padding: 14 }}>

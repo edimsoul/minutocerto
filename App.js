@@ -17,6 +17,7 @@ import { backupSeNecessario, temToken, apagarContaBackup } from './src/backup';
 import { excluirMeusDados, planoMP, presenca } from './src/nuvem';
 import { lerEmailCadastrado } from './src/recuperacao';
 import { useGrupo, sairDoGrupo, estadoGrupo, sincronizarAgora } from './src/grupo';
+//import { useLembreteAluguel } from './src/telas/Lembretealugue';
 
 import { useBrinquedos } from './src/brinquedos/useBrinquedos';
 import Brinquedos from './src/brinquedos/Brinquedos';
@@ -45,6 +46,17 @@ const TITULOS = {
   conectar: 'Conectar aparelho', feedback: 'Feedback', privacidade: 'Privacidade e dados', assinatura: 'Assinatura',
 };
 
+// NOVO: conta quantos aluguéis estão rodando agora.
+// ATENÇÃO: ajuste os nomes dos campos para os que seu useBrinquedos/usePulaPula realmente usam.
+const estaEmAndamento = (x) =>
+  !!x && !!(x.inicio || x.iniciadoEm || x.rodando || x.emAndamento || x.ativo) && !x.fim && !x.finalizado;
+
+function contarAlugueis(brinq, pula) {
+  const listaBrinq = Array.isArray(brinq.itens) ? brinq.itens : [];
+  const listaPula = Array.isArray(pula.itens) ? pula.itens : (Array.isArray(pula.sessoes) ? pula.sessoes : []);
+  return listaBrinq.filter(estaEmAndamento).length + listaPula.filter(estaEmAndamento).length;
+}
+
 function Principal() {
   const [tela, setTela] = useState('inicio');
   const [menu, setMenu] = useState(false);
@@ -63,6 +75,10 @@ function Principal() {
   const baixando = useAtualizacao(!logado);
 
   const modo = config.modo || 'veiculos';
+
+  // NOVO: notificação fixa enquanto houver aluguel em andamento (0 = remove a notificação)
+  //const qtdAlugueis = logado ? contarAlugueis(brinq, pula) : 0;
+  //useLembreteAluguel(qtdAlugueis);
 
   useVoltarAndroid({
     logado, menu, tela,

@@ -104,9 +104,9 @@ export function patchDe(tipo, r) {
   if (tipo === 'pausar') return { ...base, status: 'pausado', inicio: 0, acumulado: d.total_ms };
   if (tipo === 'encerrar') return { ...base, status: 'finalizado', inicio: 0, acumulado: d.total_ms };
   if (tipo === 'liberar') return { ...base, status: 'livre', inicio: 0, acumulado: 0 };
+  if (tipo === 'tempo') return { ...base, limite: d.limite };
   return base;
 }
-
 // estado de um item no servidor -> campos do item local
 const STATUS_LOCAL = { rodando: 'rodando', pausado: 'pausado', finalizado: 'finalizado', parado: 'livre' };
 export const patchDoServidor = (i) => ({

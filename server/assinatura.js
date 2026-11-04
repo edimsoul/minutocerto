@@ -8,7 +8,7 @@ const DIAS = Number(process.env.MENSALIDADE_DIAS) || 30;
 const EMAIL = (process.env.PAGADOR_EMAIL_PADRAO || 'pagamento@minutocerto.app').trim();
 const PUBLIC_URL = (process.env.PUBLIC_URL || '').trim().replace(/\/+$/, '');
 
-if (!TOKEN) console.warn('[assinatura] Falta MP_TOKEN_ASSINATURA: o pagamento da mensalidade fica desligado');
+if (!TOKEN) console.warn('[assinatura] Falta MP_ACCESS_TOKEN: o pagamento da mensalidade fica desligado');
 if (!(VALOR > 0)) console.warn('[assinatura] Falta MENSALIDADE_VALOR: o pagamento da mensalidade fica desligado');
 
 module.exports = ({ db, mp, rota, falha, exige, limite, cacheAp, testeDias }) => {

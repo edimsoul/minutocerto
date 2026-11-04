@@ -20,22 +20,77 @@ const LINHA_2 = [25, 30];
 
 const PAD_JANELA = { padding: 20, paddingBottom: 120 };
 
-function precisaEscolherCobranca(v, agora) {
-  if (!v.limite) return false;
-  return decorrido(v, agora) < v.limite * 60000;
+function precisaEscolherCobranca(v) {
+  return !!v.limite;
 }
 
-function AcoesBrinquedo({ v, brinq, aoIniciar, aoEncerrar, aoCobrar, depois }) {
+function OpcaoCobranca({ icone, titulo, detalhe, valor, tom, destaque, onPress }) {
+  return (
+    <TouchableOpacity
+      activeOpacity={0.85}
+      onPress={onPress}
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: destaque ? tom + '14' : '#fff',
+        borderRadius: 14,
+        paddingVertical: 14,
+        paddingHorizontal: 14,
+        borderWidth: destaque ? 2 : 1,
+        borderColor: destaque ? tom : '#e5e7eb',
+        marginTop: 10,
+      }}>
+      <View
+        style={{
+          width: 42,
+          height: 42,
+          borderRadius: 21,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: destaque ? tom : '#f3f4f6',
+        }}>
+        <MaterialCommunityIcons name={icone} size={22} color={destaque ? '#fff' : cor.suave} />
+      </View>
+
+      <View style={{ flex: 1, marginLeft: 12 }}>
+        <Text style={{ fontSize: 15, fontWeight: '800', color: destaque ? '#000' : '#374151' }}>{titulo}</Text>
+        <Text style={{ fontSize: 12, color: cor.suave, marginTop: 2 }}>{detalhe}</Text>
+        {destaque && (
+          <View
+            style={{
+              alignSelf: 'flex-start',
+              marginTop: 6,
+              backgroundColor: tom,
+              borderRadius: 10,
+              paddingHorizontal: 8,
+              paddingVertical: 2,
+            }}>
+            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.3 }}>SUGERIDO</Text>
+          </View>
+        )}
+      </View>
+
+      <Text style={{ fontSize: destaque ? 18 : 16, fontWeight: '800', color: destaque ? tom : '#6b7280' }}>
+        {brl(valor)}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+function AcoesBrinquedo({ v, brinq, aoIniciar, aoEncerrar, aoCobrar, aoMaisTempo, depois }) {
   const f = (fn) => () => { fn(); if (depois) depois(); };
+  const podeMaisTempo = !!v.limite;
   return (
     <View style={s.acoes}>
       {v.status === 'livre' && <Botao txt="Iniciar aluguel" c={cor.verde} onPress={f(() => aoIniciar(v))} />}
       {v.status === 'rodando' && (<>
         <Botao txt="Pausar" c={cor.ambar} onPress={f(() => brinq.pausar(v))} />
+        {podeMaisTempo && <Botao txt="+ Tempo" c={cor.azul} onPress={f(() => aoMaisTempo(v))} />}
         <Botao txt="Encerrar" c={cor.vermelho} onPress={f(() => aoEncerrar(v))} />
       </>)}
       {v.status === 'pausado' && (<>
         <Botao txt="Continuar" c={cor.verde} onPress={f(() => brinq.retomar(v))} />
+        {podeMaisTempo && <Botao txt="+ Tempo" c={cor.azul} onPress={f(() => aoMaisTempo(v))} />}
         <Botao txt="Encerrar" c={cor.vermelho} onPress={f(() => aoEncerrar(v))} />
       </>)}
       {v.status === 'finalizado' && <Botao txt="Cobrar" c={cor.azul} onPress={f(() => aoCobrar(v))} />}
@@ -43,7 +98,7 @@ function AcoesBrinquedo({ v, brinq, aoIniciar, aoEncerrar, aoCobrar, depois }) {
   );
 }
 
-function CartaoBrinquedo({ v, agora, preco, tabela, brinq, limiteMin, aoIniciar, aoEncerrar, aoCobrar, depois }) {
+function CartaoBrinquedo({ v, agora, preco, tabela, brinq, limiteMin, aoIniciar, aoEncerrar, aoCobrar, aoMaisTempo, depois }) {
   const ms = decorrido(v, agora);
   const temLimite = !!limiteMin && v.status !== 'livre';
   const restante = temLimite ? limiteMin * 60000 - ms : 0;
@@ -88,7 +143,7 @@ function CartaoBrinquedo({ v, agora, preco, tabela, brinq, limiteMin, aoIniciar,
       </View>
       <AcoesBrinquedo
         v={v} brinq={brinq} aoIniciar={aoIniciar} aoEncerrar={aoEncerrar}
-        aoCobrar={aoCobrar} depois={depois}
+        aoCobrar={aoCobrar} aoMaisTempo={aoMaisTempo} depois={depois}
       />
     </View>
   );
@@ -106,6 +161,9 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
   const [tempoSel, setTempoSel] = useState(undefined);
   const avisados = useRef(new Set());
 
+  const [maisId, setMaisId] = useState(null);
+  const [maisSel, setMaisSel] = useState(undefined);
+
   const [lendoEnc, setLendoEnc] = useState(false);
   const [digEnc, setDigEnc] = useState(false);
   const [numeroEnc, setNumeroEnc] = useState('');
@@ -115,6 +173,10 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
   const [modoCobranca, setModoCobranca] = useState({});
   const [decidindoId, setDecidindoId] = useState(null);
 
+  const [outraAberta, setOutraAberta] = useState(false);
+  const [outraTxt, setOutraTxt] = useState('');
+  const [pendOutra, setPendOutra] = useState(null);
+
   const { itens } = brinq;
   const preco = config.precoMinuto;
   const tabela = config.precosBrinquedo;
@@ -122,6 +184,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
   const ficha = itens.find((v) => v.id === fichaId);
   const cobrando = itens.find((v) => v.id === cobrancaId);
   const escolhendo = itens.find((v) => v.id === escolhaId);
+  const adicionando = itens.find((v) => v.id === maisId);
   const achados = numero.trim() ? brinq.buscarPorNumero(numero) : [];
 
   const noLote = lote.map((id) => itens.find((v) => v.id === id)).filter(Boolean);
@@ -148,6 +211,19 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
     });
   }, [agora]);
 
+  useEffect(() => {
+    if (!pendOutra) return;
+    const lista = pendOutra.ids.map((id) => itens.find((v) => v.id === id)).filter(Boolean);
+    if (lista.length !== pendOutra.ids.length) return;
+    if (lista.some((v) => v.status !== 'finalizado')) return;
+    const h = montarHistorico(lista, pendOutra.metodo, {}, { rotuloDe: rotuloBrinquedo, preco, tabela, modo: 'veiculos' });
+    onPagamento(h);
+    brinq.liberar(pendOutra.ids, h);
+    pendOutra.ids.forEach((id) => avisados.current.delete(id));
+    setPendOutra(null);
+    setModoCobranca({});
+  }, [itens, pendOutra]);
+
   const limparLimites = (ids) => ids.forEach((id) => avisados.current.delete(id));
 
   const aoIniciar = (v) => { setTempoSel(undefined); setEscolhaId(v.id); };
@@ -167,11 +243,22 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
     setTempoSel(undefined);
   };
 
+  const aoMaisTempo = (v) => { setMaisSel(undefined); setMaisId(v.id); };
+  const fecharMais = () => { setMaisId(null); setMaisSel(undefined); };
+
+  const confirmarMais = () => {
+    const v = adicionando;
+    if (!v || !maisSel) return;
+    avisados.current.delete(v.id);
+    brinq.adicionarTempo(v, maisSel);
+    fecharMais();
+  };
+
   const aoLerQR = (texto) => {
     setLendo(false);
-    const v = brinq.buscarPorCodigo(texto);
+    const v = brinq.buscarPorCodigo(String(texto).trim());
     if (!v) {
-      Alert.alert('QR Code não cadastrado', 'Este QR Code não está ligado a nenhum brinquedo. Cadastre o brinquedo primeiro: Menu → Cadastro.');
+      Alert.alert('Código não cadastrado', 'Este código não está ligado a nenhum brinquedo. Cadastre o brinquedo primeiro: Menu → Cadastro.');
       return;
     }
     setFichaId(v.id);
@@ -180,7 +267,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
 
   const aoEncerrar = (v) => {
     if (v && (v.status === 'rodando' || v.status === 'pausado')) {
-      if (precisaEscolherCobranca(v, agora)) {
+      if (precisaEscolherCobranca(v)) {
         setDecidindoId(v.id);
         return;
       }
@@ -201,7 +288,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
       Alert.alert('Já adicionado', 'Este brinquedo já está na lista.');
       return;
     }
-    if (precisaEscolherCobranca(v, agora)) {
+    if (precisaEscolherCobranca(v)) {
       setDecidindoId(v.id);
       return;
     }
@@ -221,9 +308,9 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
   const aoLerQREncerrar = (texto) => {
     leuQRRef.current = true;
     setLendoEnc(false);
-    const v = brinq.buscarPorCodigo(texto);
+    const v = brinq.buscarPorCodigo(String(texto).trim());
     if (!v) {
-      Alert.alert('QR Code não cadastrado', 'Este QR Code não está ligado a nenhum brinquedo.');
+      Alert.alert('Código não cadastrado', 'Este código não está ligado a nenhum brinquedo.');
       return;
     }
     adicionarAoLote(v);
@@ -254,15 +341,29 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
     if (feitos.length) setCobrancaId(feitos[0].id);
   };
 
+  const fecharOutra = () => { setOutraAberta(false); setOutraTxt(''); };
+
+  const encerrarOutraForma = async () => {
+    const metodo = outraTxt.trim() || 'Outra forma';
+    const feitos = [];
+    for (const v of noLote) {
+      const modo = modoCobranca[v.id];
+      if (await brinq.finalizar(v, { modoCobranca: modo, preco, tabela, agora })) feitos.push(v);
+    }
+    fecharOutra();
+    setLote([]);
+    if (feitos.length) setPendOutra({ ids: feitos.map((v) => v.id), metodo });
+  };
+
   const aoCobrar = (v) => setCobrancaId(v.id);
 
-  const quadradoTempo = (min, i) => (
+  const criarQuadrado = (sel, setSel) => (min, i) => (
     <TouchableOpacity
       key={min}
       activeOpacity={0.8}
-      style={[e.tempo, i > 0 && { marginLeft: 10 }, tempoSel === min && e.tempoSel]}
-      onPress={() => setTempoSel(min)}>
-      {tempoSel === min && (
+      style={[e.tempo, i > 0 && { marginLeft: 10 }, sel === min && e.tempoSel]}
+      onPress={() => setSel(min)}>
+      {sel === min && (
         <MaterialCommunityIcons name="check-circle" size={18} color={cor.azul} style={e.tempoCheck} />
       )}
       <Text style={e.tempoNum}>{min}</Text>
@@ -270,6 +371,9 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
       <Text style={e.tempoValor}>{brl(valorPacote(min, preco, tabela))}</Text>
     </TouchableOpacity>
   );
+
+  const quadradoTempo = criarQuadrado(tempoSel, setTempoSel);
+  const quadradoMais = criarQuadrado(maisSel, setMaisSel);
 
   const decidindo = itens.find((v) => v.id === decidindoId);
 
@@ -282,7 +386,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
             style={[s.botaoGrande, { backgroundColor: cor.verde, flexDirection: 'row', justifyContent: 'center', marginTop: 0 }]}
             onPress={() => setLendo(true)}>
             <MaterialCommunityIcons name="qrcode-scan" size={26} color={cor.branco} />
-            <Text style={[s.botaoGrandeTxt, { marginLeft: 10 }]}>Ler QR Code</Text>
+            <Text style={[s.botaoGrandeTxt, { marginLeft: 10 }]}>Ler QR Code ou código de barras</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setDigitando(true)}>
             <Text style={s.link}>Digitar o número do brinquedo</Text>
@@ -295,24 +399,24 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
         </View>
 
         {itens.length > 0 && ativos.length === 0 && (
-          <Text style={s.vazio}>Nenhum aluguel em andamento.{'\n'}Leia o QR Code do brinquedo para iniciar.</Text>
+          <Text style={s.vazio}>Nenhum aluguel em andamento.{'\n'}Leia o código do brinquedo para iniciar.</Text>
         )}
 
         {ativos.map((v) => (
           <CartaoBrinquedo
             key={v.id} v={v} agora={agora} preco={preco} tabela={tabela} brinq={brinq} limiteMin={v.limite}
-            aoIniciar={aoIniciar} aoEncerrar={aoEncerrar} aoCobrar={aoCobrar}
+            aoIniciar={aoIniciar} aoEncerrar={aoEncerrar} aoCobrar={aoCobrar} aoMaisTempo={aoMaisTempo}
           />
         ))}
       </ScrollView>
 
       <LeitorQR
-        visivel={lendo} titulo="Aponte para o QR Code do brinquedo"
+        visivel={lendo} titulo="Aponte para o QR Code ou código de barras do brinquedo"
         onLido={aoLerQR} onFechar={() => setLendo(false)}
       />
 
       <LeitorQR
-        visivel={lendoEnc} titulo="Aponte para o QR Code do brinquedo a encerrar"
+        visivel={lendoEnc} titulo="Aponte para o código do brinquedo a encerrar"
         onLido={aoLerQREncerrar} onFechar={aoFecharCameraEnc}
       />
 
@@ -320,42 +424,43 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
         <View style={s.fundoModal}>
           <View style={s.modal}>
             <ScrollView contentContainerStyle={PAD_JANELA}>
-              <Text style={[s.modalTitulo, { marginBottom: 6 }]}>Encerramento antecipado</Text>
-              {decidindo && (
-                <Text style={[s.sub2, { marginBottom: 16 }]}>
-                  {rotuloBrinquedo(decidindo)} · {fmtTempo(decorrido(decidindo, agora))} corridos de {decidindo.limite} min
-                </Text>
-              )}
+              {decidindo && (() => {
+                const esgotado = decorrido(decidindo, agora) >= decidindo.limite * 60000;
+                return (
+                  <View>
+                    <Text style={[s.modalTitulo, { marginBottom: 6 }]}>
+                      {esgotado ? 'Tempo esgotado' : 'Encerramento antecipado'}
+                    </Text>
+                    <Text style={[s.sub2, { marginBottom: 6 }]}>
+                      {rotuloBrinquedo(decidindo)} · {fmtTempo(decorrido(decidindo, agora))} de {decidindo.limite} min
+                    </Text>
 
-              <TouchableOpacity
-                activeOpacity={0.85}
-                style={[e.opcaoCobranca, { borderColor: cor.azul }]}
-                onPress={() => escolherModoCobranca('integral')}>
-                <MaterialCommunityIcons name="cash-multiple" size={28} color={cor.azul} />
-                <View style={{ flex: 1, marginLeft: 12 }}>
-                  <Text style={e.opcaoTitulo}>Cobrar valor integral</Text>
-                  <Text style={e.opcaoSub}>
-                    {decidindo ? brl(valorPacote(decidindo.limite, preco, tabela)) : ''} · tempo contratado
-                  </Text>
-                </View>
-              </TouchableOpacity>
+                    <OpcaoCobranca
+                      icone="cash-multiple"
+                      titulo="Valor integral"
+                      detalhe="Tempo contratado"
+                      valor={valorPacote(decidindo.limite, preco, tabela)}
+                      tom={cor.azul}
+                      destaque={esgotado}
+                      onPress={() => escolherModoCobranca('integral')}
+                    />
 
-              <TouchableOpacity
-                activeOpacity={0.85}
-                style={[e.opcaoCobranca, { borderColor: cor.verde, marginTop: 10 }]}
-                onPress={() => escolherModoCobranca('corrido')}>
-                <MaterialCommunityIcons name="timer-sand" size={28} color={cor.verde} />
-                <View style={{ flex: 1, marginLeft: 12 }}>
-                  <Text style={e.opcaoTitulo}>Cobrar só o tempo corrido</Text>
-                  <Text style={e.opcaoSub}>
-                    {decidindo ? brl(valorACobrar(decidindo, agora, preco, 'corrido', tabela)) : ''} · minutos usados
-                  </Text>
-                </View>
-              </TouchableOpacity>
+                    <OpcaoCobranca
+                      icone="timer-sand"
+                      titulo="Só o tempo corrido"
+                      detalhe="Minutos realmente usados"
+                      valor={valorACobrar(decidindo, agora, preco, 'corrido', tabela)}
+                      tom={cor.verde}
+                      destaque={!esgotado}
+                      onPress={() => escolherModoCobranca('corrido')}
+                    />
 
-              <TouchableOpacity onPress={cancelarDecisao}>
-                <Text style={s.link}>Cancelar</Text>
-              </TouchableOpacity>
+                    <TouchableOpacity onPress={cancelarDecisao}>
+                      <Text style={s.link}>Cancelar</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })()}
             </ScrollView>
           </View>
         </View>
@@ -408,6 +513,37 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
         </View>
       </Modal>
 
+      <Modal transparent animationType="slide" visible={!!adicionando} onRequestClose={fecharMais}>
+        <View style={s.fundoModal}>
+          <View style={[s.modal, { maxHeight: '94%' }]}>
+            <ScrollView contentContainerStyle={PAD_JANELA}>
+              <Text style={[s.modalTitulo, { marginBottom: 4 }]}>Adicionar tempo</Text>
+              {adicionando && (
+                <Text style={[s.sub2, { marginBottom: 14 }]}>
+                  {rotuloBrinquedo(adicionando)} · contratado: {adicionando.limite} min
+                </Text>
+              )}
+
+              <View style={e.linhaTempos}>{LINHA_1.map(quadradoMais)}</View>
+              <View style={e.linhaTempos}>{LINHA_2.map(quadradoMais)}</View>
+
+              <TouchableOpacity
+                style={[e.botaoSeguir, !maisSel && { opacity: 0.4 }]}
+                disabled={!maisSel}
+                onPress={confirmarMais}>
+                <Text style={e.botaoSeguirTxt}>
+                  {!maisSel
+                    ? 'Escolha o tempo'
+                    : `Adicionar + ${maisSel} min (total ${(adicionando ? adicionando.limite : 0) + maisSel} min)`}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={fecharMais}><Text style={s.link}>Cancelar</Text></TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       <Modal transparent animationType="slide" visible={digEnc} onRequestClose={fecharDigitarEnc}>
         <View style={s.fundoModal}>
           <ScrollView style={s.modal} contentContainerStyle={PAD_JANELA} keyboardShouldPersistTaps="handled">
@@ -442,7 +578,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
 
       <Modal
         transparent animationType="slide"
-        visible={noLote.length > 0 && !lendoEnc && !digEnc && !decidindo}
+        visible={noLote.length > 0 && !lendoEnc && !digEnc && !decidindo && !outraAberta}
         onRequestClose={() => { setLote([]); setModoCobranca({}); }}>
         <View style={s.fundoModal}>
           <View style={[s.modal, { maxHeight: '94%' }]}>
@@ -484,7 +620,10 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
 
               <View style={s.acoes}>
                 <Botao txt="Juntar com outro" c={cor.ambar} onPress={() => { leuQRRef.current = false; setLendoEnc(true); }} />
-                <Botao txt="Encerrar e cobrar" c={cor.vermelho} onPress={encerrarLote} />
+                <Botao txt="Pix / Dinheiro" c={cor.vermelho} onPress={encerrarLote} />
+              </View>
+              <View style={s.acoes}>
+                <Botao txt="Outra forma" c={cor.azul} onPress={() => setOutraAberta(true)} />
               </View>
               <TouchableOpacity onPress={abrirDigitarEnc}>
                 <Text style={s.link}>Juntar digitando o número</Text>
@@ -497,6 +636,24 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
         </View>
       </Modal>
 
+      <Modal transparent animationType="slide" visible={outraAberta} onRequestClose={fecharOutra}>
+        <View style={s.fundoModal}>
+          <ScrollView style={s.modal} contentContainerStyle={PAD_JANELA} keyboardShouldPersistTaps="handled">
+            <Text style={s.modalTitulo}>Pagar de outra forma</Text>
+            <Text style={[s.sub2, { marginTop: 6 }]}>Total: {brl(totalLote)}</Text>
+            <TextInput
+              style={[s.input, { fontSize: 18, fontWeight: '700', marginTop: 12, color: '#000000' }]}
+              placeholder="Ex.: Cartão, Fiado, Cortesia"
+              value={outraTxt} onChangeText={setOutraTxt} autoFocus
+            />
+            <TouchableOpacity style={[e.botaoSeguir, { marginTop: 14 }]} onPress={encerrarOutraForma}>
+              <Text style={e.botaoSeguirTxt}>Encerrar e registrar pagamento</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={fecharOutra}><Text style={s.link}>Voltar</Text></TouchableOpacity>
+          </ScrollView>
+        </View>
+      </Modal>
+
       <Modal transparent animationType="slide" visible={!!ficha} onRequestClose={() => setFichaId(null)}>
         <View style={s.fundoModal}>
           <View style={[s.modal, { maxHeight: '94%' }]}>
@@ -505,7 +662,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
               {ficha && (
                 <CartaoBrinquedo
                   v={ficha} agora={agora} preco={preco} tabela={tabela} brinq={brinq} limiteMin={ficha.limite}
-                  aoIniciar={aoIniciar} aoEncerrar={aoEncerrar} aoCobrar={aoCobrar}
+                  aoIniciar={aoIniciar} aoEncerrar={aoEncerrar} aoCobrar={aoCobrar} aoMaisTempo={aoMaisTempo}
                   depois={() => setFichaId(null)}
                 />
               )}
@@ -604,12 +761,4 @@ const e = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16,
   },
   botaoSeguirTxt: { color: '#ffffff', fontSize: 17, fontWeight: '800' },
-
-  opcaoCobranca: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: cor.fundo, borderRadius: 12,
-    padding: 14, borderWidth: 2,
-  },
-  opcaoTitulo: { fontSize: 16, fontWeight: '800', color: cor.tinta },
-  opcaoSub: { fontSize: 12, color: cor.suave, marginTop: 2 },
 });

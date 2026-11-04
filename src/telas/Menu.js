@@ -44,7 +44,7 @@ function Corpo({ modo, escolhido, onFechar, onModo, onIr, onSair }) {
       c: cor.verde,
     },
     ...(modo === 'veiculos'
-      ? [{ k: 'cadastro', n: 'Cadastro', d: 'Brinquedos e QR Code', icone: 'qrcode-scan', c: cor.azul }]
+      ? [{ k: 'cadastro', n: 'Cadastro de brinquedos', d: 'Qr-Code e Código de barras', icone: 'qrcode-scan', c: cor.azul }]
       : []),
     { k: 'relatorio', n: 'Relatório', d: 'Ganhos e PDF', icone: 'chart-box-outline', c: cor.tinta },
     { k: 'valor', n: 'Ajuste de Valores', d: 'Valores de Pacotes', icone: 'currency-brl', c: cor.ambar },

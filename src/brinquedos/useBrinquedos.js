@@ -63,6 +63,17 @@ export function useBrinquedos() {
     );
   };
 
+  const adicionarTempo = (v, minutos) => {
+    const atual = ref.current.find((x) => x.id === v.id) || v;
+    if (!atual.limite || !minutos) return Promise.resolve(false);
+    const limite = atual.limite + minutos;
+    return agir(
+      v, 'tempo', { limite },
+      () => atualiza(v.id, { limite }),
+      (p) => ({ ...p, limite }),
+    );
+  };
+
   return {
     itens, pronto,
     buscarPorCodigo, buscarPorNumero, cadastrar,
@@ -78,6 +89,7 @@ export function useBrinquedos() {
     pausar: (v) =>
       agir(v, 'pausar', {}, () => atualiza(v.id, { status: 'pausado', acumulado: decorrido(v, Date.now()), inicio: 0 })),
     retomar: (v) => agir(v, 'retomar', {}, () => atualiza(v.id, { status: 'rodando', inicio: Date.now() })),
+    adicionarTempo,
     finalizar: (v, opcoes) => parar(v, 'encerrar', opcoes?.modoCobranca),
     finalizarOutro: (v) => parar(v, 'encerrar'),
     liberar: async (ids, hist) => {

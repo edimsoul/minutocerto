@@ -45,15 +45,22 @@ function htmlRelatorio(lista, periodo, r) {
   </body></html>`;
 }
 
+const CATEGORIAS = [['todos', 'Todos'], ['veiculos', 'Brinquedos'], ['pula', 'Pula-pula'], ['avulso', 'Avulso']];
+const PERIODOS = [['hoje', 'Hoje'], ['semana', '7 dias'], ['tudo', 'Tudo']];
+
 /* ── Tela ── */
 export default function Relatorio({ historico, onLimpar }) {
+  // Passo 1: escolher o tipo (começa sem nada escolhido). Passo 2: escolher o período.
+  const [cat, setCat] = useState(null);
   const [filtro, setFiltro] = useState('hoje');
-  const [cat, setCat] = useState('todos');
+
   const ini = new Date(); ini.setHours(0, 0, 0, 0);
   const limite = { hoje: ini.getTime(), semana: ini.getTime() - 6 * 86400000, tudo: 0 }[filtro];
-  const lista = historico.filter(
-    (h) => new Date(h.data).getTime() >= limite && (cat === 'todos' || (h.modo || 'veiculos') === cat)
-  );
+  const lista = cat
+    ? historico.filter(
+        (h) => new Date(h.data).getTime() >= limite && (cat === 'todos' || (h.modo || 'veiculos') === cat)
+      )
+    : [];
 
   const total = lista.reduce((a, h) => a + h.valor, 0);
   const pix = lista.filter((h) => h.metodo === 'Pix').reduce((a, h) => a + h.valor, 0);
@@ -61,7 +68,7 @@ export default function Relatorio({ historico, onLimpar }) {
   const seg = lista.reduce((a, h) => a + h.segundos, 0);
   const periodo =
     { hoje: 'Hoje', semana: 'Últimos 7 dias', tudo: 'Todo o período' }[filtro] +
-    (cat !== 'todos' ? ' · ' + { veiculos: 'Brinquedos', pula: 'Pula-pula', avulso: 'Avulso' }[cat] : '');
+    (cat && cat !== 'todos' ? ' · ' + { veiculos: 'Brinquedos', pula: 'Pula-pula', avulso: 'Avulso' }[cat] : '');
 
   const exportarTexto = () => {
     const linhas = ['Data;Item;Tempo(s);Valor;Pagamento',
@@ -85,63 +92,73 @@ export default function Relatorio({ historico, onLimpar }) {
 
   return (
     <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 30 }}>
+      <Text style={s.rotulo}>Escolha o tipo</Text>
       <View style={s.linhaTipos}>
-        {[['hoje', 'Hoje'], ['semana', '7 dias'], ['tudo', 'Tudo']].map(([k, n]) => (
-          <TouchableOpacity key={k} onPress={() => setFiltro(k)} style={[s.chip, filtro === k && s.chipOn]}>
-            <Text style={[s.chipTxt, filtro === k && { color: cor.branco }]}>{n}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-      <View style={s.linhaTipos}>
-        {[['todos', 'Todos'], ['veiculos', 'Brinquedos'], ['pula', 'Pula-pula'], ['avulso', 'Avulso']].map(([k, n]) => (
+        {CATEGORIAS.map(([k, n]) => (
           <TouchableOpacity key={k} onPress={() => setCat(k)} style={[s.chip, cat === k && s.chipOn]}>
             <Text style={[s.chipTxt, cat === k && { color: cor.branco }]}>{n}</Text>
           </TouchableOpacity>
         ))}
       </View>
 
-      <View style={s.card}>
-        <Text style={s.rotulo}>Total arrecadado</Text>
-        <Text style={s.totalGrande}>{brl(total)}</Text>
-        <View style={s.linhaResumo}><Text style={s.resumoTxt}>Pix</Text><Text style={s.resumoVal}>{brl(pix)}</Text></View>
-        <View style={s.linhaResumo}><Text style={s.resumoTxt}>Dinheiro</Text><Text style={s.resumoVal}>{brl(din)}</Text></View>
-        <View style={s.linhaResumo}><Text style={s.resumoTxt}>Aluguéis</Text><Text style={s.resumoVal}>{lista.length}</Text></View>
-        {lista.some((h) => h.metodo === 'Sem cobrança') && (
-          <View style={s.linhaResumo}>
-            <Text style={s.resumoTxt}>Sem cobrança</Text>
-            <Text style={s.resumoVal}>{lista.filter((h) => h.metodo === 'Sem cobrança').length}</Text>
-          </View>
-        )}
-        <View style={s.linhaResumo}><Text style={s.resumoTxt}>Tempo total</Text><Text style={s.resumoVal}>{Math.floor(seg / 60)} min</Text></View>
-      </View>
+      {!cat && <Text style={s.vazio}>Escolha um tipo acima para ver o relatório.</Text>}
 
-      {lista.length === 0 && <Text style={s.vazio}>Sem aluguéis neste período.</Text>}
-      {lista.map((h) => (
-        <View key={h.id} style={s.itemHist}>
-          <View style={{ flex: 1 }}>
-            <Text style={s.tipo}>{rotuloHist(h)}</Text>
-            {h.itens && h.itens.length > 1 && (
-              <Text style={s.sub2}>
-                {h.itens.map((i) => `${i.rotulo || `${i.tipo} ${i.numero}`}: ${fmtTempoTexto(i.segundos)} (${brl(i.valor)})`).join('  |  ')}
-              </Text>
-            )}
-            <Text style={s.sub2}>
-              {h.segundos > 0 ? `${fmtTempoTexto(h.segundos)} · ` : ''}{new Date(h.data).toLocaleString('pt-BR')} · {h.metodo}
-              {h.metodo === 'Dinheiro' && h.troco > 0 ? ` · troco ${brl(h.troco)}` : ''}{h.motivo ? ` · ${h.motivo}` : ''}
-            </Text>
-          </View>
-          <Text style={s.valorHist}>{brl(h.valor)}</Text>
-        </View>
-      ))}
-
-      {lista.length > 0 && (
+      {!!cat && (
         <>
-          <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.azul, marginTop: 14 }]} onPress={gerarPdf}>
-            <Text style={s.botaoGrandeTxt}>Gerar relatório em PDF</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={exportarTexto}><Text style={s.link}>Compartilhar como texto</Text></TouchableOpacity>
+          <Text style={s.rotulo}>Escolha o período</Text>
+          <View style={s.linhaTipos}>
+            {PERIODOS.map(([k, n]) => (
+              <TouchableOpacity key={k} onPress={() => setFiltro(k)} style={[s.chip, filtro === k && s.chipOn]}>
+                <Text style={[s.chipTxt, filtro === k && { color: cor.branco }]}>{n}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <View style={s.card}>
+            <Text style={s.rotulo}>Total arrecadado</Text>
+            <Text style={s.totalGrande}>{brl(total)}</Text>
+            <View style={s.linhaResumo}><Text style={s.resumoTxt}>Pix</Text><Text style={s.resumoVal}>{brl(pix)}</Text></View>
+            <View style={s.linhaResumo}><Text style={s.resumoTxt}>Dinheiro</Text><Text style={s.resumoVal}>{brl(din)}</Text></View>
+            <View style={s.linhaResumo}><Text style={s.resumoTxt}>Aluguéis</Text><Text style={s.resumoVal}>{lista.length}</Text></View>
+            {lista.some((h) => h.metodo === 'Sem cobrança') && (
+              <View style={s.linhaResumo}>
+                <Text style={s.resumoTxt}>Sem cobrança</Text>
+                <Text style={s.resumoVal}>{lista.filter((h) => h.metodo === 'Sem cobrança').length}</Text>
+              </View>
+            )}
+            <View style={s.linhaResumo}><Text style={s.resumoTxt}>Tempo total</Text><Text style={s.resumoVal}>{Math.floor(seg / 60)} min</Text></View>
+          </View>
+
+          {lista.length === 0 && <Text style={s.vazio}>Sem aluguéis neste período.</Text>}
+          {lista.map((h) => (
+            <View key={h.id} style={s.itemHist}>
+              <View style={{ flex: 1 }}>
+                <Text style={s.tipo}>{rotuloHist(h)}</Text>
+                {h.itens && h.itens.length > 1 && (
+                  <Text style={s.sub2}>
+                    {h.itens.map((i) => `${i.rotulo || `${i.tipo} ${i.numero}`}: ${fmtTempoTexto(i.segundos)} (${brl(i.valor)})`).join('  |  ')}
+                  </Text>
+                )}
+                <Text style={s.sub2}>
+                  {h.segundos > 0 ? `${fmtTempoTexto(h.segundos)} · ` : ''}{new Date(h.data).toLocaleString('pt-BR')} · {h.metodo}
+                  {h.metodo === 'Dinheiro' && h.troco > 0 ? ` · troco ${brl(h.troco)}` : ''}{h.motivo ? ` · ${h.motivo}` : ''}
+                </Text>
+              </View>
+              <Text style={s.valorHist}>{brl(h.valor)}</Text>
+            </View>
+          ))}
+
+          {lista.length > 0 && (
+            <>
+              <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.azul, marginTop: 14 }]} onPress={gerarPdf}>
+                <Text style={s.botaoGrandeTxt}>Gerar relatório em PDF</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={exportarTexto}><Text style={s.link}>Compartilhar como texto</Text></TouchableOpacity>
+            </>
+          )}
         </>
       )}
+
       {historico.length > 0 && (
         <TouchableOpacity onPress={() =>
           Alert.alert('Apagar histórico', 'Isso apaga TODOS os aluguéis salvos. Continuar?', [

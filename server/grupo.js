@@ -1,10 +1,10 @@
 const express = require('express');
 const crypto = require('crypto');
 
-const TIPOS = ['iniciar', 'pausar', 'retomar', 'encerrar', 'liberar', 'ajustar'];
+const TIPOS = ['iniciar', 'pausar', 'retomar', 'encerrar', 'liberar', 'ajustar', 'tempo'];
 const ROTULO = { rodando: 'iniciado', pausado: 'pausado', finalizado: 'encerrado', parado: 'liberado' };
-const VALIDADE_MS = 3 * 60 * 1000;     // código de 6 dígitos vale 3 minutos
-const JANELA_DADOS_MS = 15 * 60 * 1000; // só quem acabou de entrar importa os dados do principal
+const VALIDADE_MS = 3 * 60 * 1000;
+const JANELA_DADOS_MS = 15 * 60 * 1000;
 const MAX_APARELHOS = 2;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const idValido = (v) => typeof v === 'string' && UUID_RE.test(v);
@@ -31,7 +31,6 @@ const rota = (fn) => (req, res) =>
     console.error('[grupo]', req.path, e.message);
     res.status(500).json({ ok: false, erro: 'Erro no servidor. Tente novamente.' });
   });
-// o index.js já validou o segredo do aparelho e preencheu req.deviceId
 const aparelho = (req) => {
   if (!idValido(req.deviceId)) throw falha(401, 'Aparelho inválido.');
   return req.deviceId;
@@ -63,7 +62,6 @@ module.exports = (db) => {
     return n.count || 0;
   };
 
-  // Se o dono sai, o grupo inteiro acaba (ninguém continua usando a conta dele).
   const sairAtual = async (dev) => {
     const g = await doGrupo(dev);
     if (!g) return;
@@ -155,7 +153,6 @@ module.exports = (db) => {
     res.json({ ok: true });
   }));
 
-  // o aparelho principal desconecta todos os outros
   router.post('/remover', rota(async (req, res) => {
     const dev = aparelho(req);
     const g = await doGrupo(dev);
@@ -171,7 +168,6 @@ module.exports = (db) => {
     if (!g) return res.json({ ok: true, conectado: false, agora: Date.now() });
     const n = await db.from('grupo_aparelhos').select('device_id', { count: 'exact', head: true }).eq('grupo_id', g.grupo_id);
     let dados;
-    // só brinquedos e preços, e só para quem acabou de entrar (nunca o histórico)
     const recente = g.entrou_em && Date.now() - new Date(g.entrou_em).getTime() < JANELA_DADOS_MS;
     if (req.query.dados === '1' && g.dono_device !== dev && recente) {
       const s = exige(await db.from('sincronizacoes').select('dados').eq('device_id', g.dono_device).maybeSingle());
@@ -199,11 +195,37 @@ module.exports = (db) => {
     res.json({
       ok: true, conectado: true, agora: Date.now(),
       itens: await lerItens(g.grupo_id),
-      // o device_id de quem fez o evento nunca sai do servidor: só "meu" ou não
       eventos: ev.map(({ device_id, ...resto }) => ({ ...resto, meu: device_id === dev })),
       ultimo: ev.length ? ev[ev.length - 1].id : depois,
     });
   }));
+
+  const aplicarTempo = async (res, grupoId, item, base, dados) => {
+    const limite = Math.round(Number(dados.limite));
+    if (!(limite > 0 && limite <= 600)) throw falha(400, 'Tempo inválido.');
+
+    const it = exige(await db.from('grupo_itens').select('seq, status, dados')
+      .eq('grupo_id', grupoId).eq('item_id', item).maybeSingle());
+    if (!it) throw falha(400, 'Brinquedo não encontrado no grupo.');
+
+    const conflito = (seq, status) => res.status(409).json({
+      ok: false, conflito: true, estado: status, seq, agora: Date.now(),
+      erro: `Já ${ROTULO[status] || 'alterado'} por outro aparelho.`,
+    });
+
+    if (it.status !== 'rodando' && it.status !== 'pausado') return conflito(it.seq, it.status);
+    if (it.seq !== base) return conflito(it.seq, it.status);
+
+    const novoSeq = it.seq + 1;
+    const up = await db.from('grupo_itens')
+      .update({ seq: novoSeq, dados: { ...(it.dados || {}), limite } })
+      .eq('grupo_id', grupoId).eq('item_id', item).eq('seq', it.seq)
+      .select('seq');
+    if (up.error) throw new Error(up.error.message);
+    if (!up.data || !up.data.length) return conflito(it.seq, it.status);
+
+    return res.json({ ok: true, seq: novoSeq, dados: { limite }, agora: Date.now() });
+  };
 
   router.post('/evento', rota(async (req, res) => {
     const dev = aparelho(req);
@@ -220,6 +242,8 @@ module.exports = (db) => {
 
     const g = await doGrupo(dev);
     if (!g) throw falha(400, 'Este aparelho não está conectado a outro.');
+
+    if (b.tipo === 'tempo') return aplicarTempo(res, g.grupo_id, item, base, dados);
 
     const r = await db.rpc('grupo_aplicar_evento', {
       p_grupo: g.grupo_id, p_device: dev, p_uid: uid, p_item: item, p_tipo: b.tipo, p_base: base, p_dados: dados,
