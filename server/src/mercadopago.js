@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const db = require('./db');
 const cfg = require('./config');
 const { falha, exige, idValido, igual, EMAIL_RE } = require('./utils');
+const { cifrar, decifrar } = require('./cripto');
 
 const { TAXA, AVISO_TAXA, MP_CLIENT_ID, MP_CLIENT_SECRET, MP_WEBHOOK_SECRET, PUBLIC_URL, STATE_SECRET } = cfg;
 
@@ -43,8 +44,8 @@ async function pedirTokenOAuth(corpo) {
 const linhaConta = (deviceId, t, anterior = {}) => ({
   device_id: deviceId,
   mp_user_id: String(t.user_id || anterior.mp_user_id),
-  access_token: t.access_token,
-  refresh_token: t.refresh_token || anterior.refresh_token || null,
+  access_token: cifrar(t.access_token),
+  refresh_token: cifrar(t.refresh_token || anterior.refresh_token || null),
   public_key: t.public_key || anterior.public_key || null,
   expira_em: new Date(Date.now() + (Number(t.expires_in) || 15552000) * 1000).toISOString(),
   atualizado_em: new Date().toISOString(),
@@ -63,16 +64,18 @@ async function carregarConta(deviceId) {
   const dono = await donoDoAparelho(deviceId);
   const c = exige(await db.from('mp_contas').select('*').eq('device_id', dono).maybeSingle());
   if (!c?.access_token) return { token: null, userId: null, conectada: false };
+  const accessToken = decifrar(c.access_token);
+  const refreshToken = c.refresh_token ? decifrar(c.refresh_token) : null;
   const falta = c.expira_em ? new Date(c.expira_em).getTime() - Date.now() : Infinity;
-  if (falta < 86400000 && c.refresh_token) {
+  if (falta < 86400000 && refreshToken) {
     try {
-      const t = await pedirTokenOAuth({ grant_type: 'refresh_token', refresh_token: c.refresh_token });
+      const t = await pedirTokenOAuth({ grant_type: 'refresh_token', refresh_token: refreshToken });
       const nova = linhaConta(dono, t, c);
       exige(await db.from('mp_contas').upsert(nova, { onConflict: 'device_id' }));
-      return { token: nova.access_token, userId: nova.mp_user_id, conectada: true };
+      return { token: t.access_token, userId: nova.mp_user_id, conectada: true };
     } catch (e) { console.error('[renovar token]', e.detalhe || e.message); }
   }
-  return { token: c.access_token, userId: c.mp_user_id, conectada: true };
+  return { token: accessToken, userId: c.mp_user_id, conectada: true };
 }
 
 const contasCache = new Map();

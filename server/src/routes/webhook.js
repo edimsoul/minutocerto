@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { MP_WEBHOOK_SECRET } = require('../config');
 const { assinaturaValida, atualizarPagamento } = require('../mercadopago');
+const { decifrar } = require('../cripto');
 
 module.exports = (assinaturaRouter) => {
   const router = express.Router();
@@ -23,7 +24,7 @@ module.exports = (assinaturaRouter) => {
       const donoId = req.body?.user_id;
       if (!donoId) { console.warn('[webhook] sem user_id no corpo; a reconciliação automática cobre este caso'); return; }
       const { data } = await db.from('mp_contas').select('access_token').eq('mp_user_id', String(donoId)).maybeSingle();
-      if (data?.access_token) await atualizarPagamento(dataId, data.access_token);
+      if (data?.access_token) await atualizarPagamento(dataId, decifrar(data.access_token));
     } catch (e) {
       console.error('[webhook]', e.detalhe || e.message);
     }
