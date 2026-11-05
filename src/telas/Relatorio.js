@@ -6,27 +6,31 @@ import { s } from '../estilos';
 import { cor, VERSAO } from '../tema';
 import { brl, fmtTempoTexto, esc } from '../util';
 
+const SEM_COBRANCA = 'Sem cobrança';
 const rotuloHist = (h) => h.rotulo || `${h.tipo} ${h.numero}`;
+const semCobranca = (h) => h.metodo === SEM_COBRANCA;
 
-/* ── PDF ── */
 function htmlRelatorio(lista, periodo, r) {
   const linhas = lista.map((h) => `
-    <tr>
+    <tr${semCobranca(h) ? ' class="sc"' : ''}>
       <td>${esc(new Date(h.data).toLocaleString('pt-BR'))}</td>
       <td>${esc(rotuloHist(h))}</td>
       <td>${esc(fmtTempoTexto(h.segundos))}</td>
       <td>${esc(h.metodo + (h.motivo ? ' (' + h.motivo + ')' : ''))}</td>
-      <td style="text-align:right">${esc(brl(h.valor))}</td>
+      <td style="text-align:right">${semCobranca(h) ? 'Não cobrado' : esc(brl(h.valor))}</td>
     </tr>`).join('');
+  const outras = r.outras > 0 ? `<div>Outras formas<b>${esc(brl(r.outras))}</b></div>` : '';
+  const sem = r.qtdSem > 0 ? `<div>Sem cobrança<b>${r.qtdSem}</b></div>` : '';
   return `<html><head><meta charset="utf-8"/><style>
     body{font-family:Helvetica,Arial,sans-serif;color:#10212E;padding:24px}
     h1{margin:0;font-size:26px} .sub{color:#5B6B78;margin:4px 0 18px}
-    .res{display:flex;gap:12px;margin-bottom:18px}
-    .res div{flex:1;background:#F2F5F7;border-radius:8px;padding:10px}
+    .res{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:18px}
+    .res div{flex:1;min-width:110px;background:#F2F5F7;border-radius:8px;padding:10px}
     .res b{display:block;font-size:18px;margin-top:4px}
     table{width:100%;border-collapse:collapse;font-size:12px}
     th{background:#10212E;color:#fff;text-align:left;padding:7px}
     td{padding:7px;border-bottom:1px solid #D8E0E6}
+    tr.sc td{background:#FFF4E0}
     .tot{text-align:right;font-size:18px;font-weight:bold;margin-top:14px}
     .rod{margin-top:26px;color:#5B6B78;font-size:11px;text-align:center}
   </style></head><body>
@@ -36,6 +40,8 @@ function htmlRelatorio(lista, periodo, r) {
       <div>Total<b>${esc(brl(r.total))}</b></div>
       <div>Pix<b>${esc(brl(r.pix))}</b></div>
       <div>Dinheiro<b>${esc(brl(r.din))}</b></div>
+      ${outras}
+      ${sem}
       <div>Aluguéis<b>${lista.length}</b></div>
       <div>Tempo<b>${Math.floor(r.seg / 60)} min</b></div>
     </div>
@@ -48,9 +54,7 @@ function htmlRelatorio(lista, periodo, r) {
 const CATEGORIAS = [['todos', 'Todos'], ['veiculos', 'Brinquedos'], ['pula', 'Pula-pula'], ['avulso', 'Avulso']];
 const PERIODOS = [['hoje', 'Hoje'], ['semana', '7 dias'], ['tudo', 'Tudo']];
 
-/* ── Tela ── */
 export default function Relatorio({ historico, onLimpar }) {
-  // Passo 1: escolher o tipo (começa sem nada escolhido). Passo 2: escolher o período.
   const [cat, setCat] = useState(null);
   const [filtro, setFiltro] = useState('hoje');
 
@@ -62,9 +66,14 @@ export default function Relatorio({ historico, onLimpar }) {
       )
     : [];
 
-  const total = lista.reduce((a, h) => a + h.valor, 0);
-  const pix = lista.filter((h) => h.metodo === 'Pix').reduce((a, h) => a + h.valor, 0);
-  const din = total - pix;
+  const cobrados = lista.filter((h) => !semCobranca(h));
+  const listaSem = lista.filter(semCobranca);
+  const total = cobrados.reduce((a, h) => a + h.valor, 0);
+  const pix = cobrados.filter((h) => h.metodo === 'Pix').reduce((a, h) => a + h.valor, 0);
+  const din = cobrados.filter((h) => h.metodo === 'Dinheiro').reduce((a, h) => a + h.valor, 0);
+  const outras = total - pix - din;
+  const qtdSem = listaSem.length;
+  const valorSem = listaSem.reduce((a, h) => a + (h.valor || 0), 0);
   const seg = lista.reduce((a, h) => a + h.segundos, 0);
   const periodo =
     { hoje: 'Hoje', semana: 'Últimos 7 dias', tudo: 'Todo o período' }[filtro] +
@@ -72,14 +81,16 @@ export default function Relatorio({ historico, onLimpar }) {
 
   const exportarTexto = () => {
     const linhas = ['Data;Item;Tempo(s);Valor;Pagamento',
-      ...lista.map((h) => `${new Date(h.data).toLocaleString('pt-BR')};${rotuloHist(h)};${h.segundos};${h.valor.toFixed(2).replace('.', ',')};${h.metodo}${h.motivo ? ' - ' + h.motivo : ''}`),
+      ...lista.map((h) => `${new Date(h.data).toLocaleString('pt-BR')};${rotuloHist(h)};${h.segundos};${semCobranca(h) ? '0,00' : h.valor.toFixed(2).replace('.', ',')};${h.metodo}${h.motivo ? ' - ' + h.motivo : ''}`),
       `;;;${total.toFixed(2).replace('.', ',')};TOTAL`];
     Share.share({ message: linhas.join('\n'), title: 'Relatório MinutoCerto' });
   };
 
   const gerarPdf = async () => {
     try {
-      const { uri } = await Print.printToFileAsync({ html: htmlRelatorio(lista, periodo, { total, pix, din, seg }) });
+      const { uri } = await Print.printToFileAsync({
+        html: htmlRelatorio(lista, periodo, { total, pix, din, outras, qtdSem, seg }),
+      });
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'Relatório MinutoCerto', UTI: 'com.adobe.pdf' });
       } else {
@@ -119,34 +130,49 @@ export default function Relatorio({ historico, onLimpar }) {
             <Text style={s.totalGrande}>{brl(total)}</Text>
             <View style={s.linhaResumo}><Text style={s.resumoTxt}>Pix</Text><Text style={s.resumoVal}>{brl(pix)}</Text></View>
             <View style={s.linhaResumo}><Text style={s.resumoTxt}>Dinheiro</Text><Text style={s.resumoVal}>{brl(din)}</Text></View>
+            {outras > 0 && (
+              <View style={s.linhaResumo}><Text style={s.resumoTxt}>Outras formas</Text><Text style={s.resumoVal}>{brl(outras)}</Text></View>
+            )}
             <View style={s.linhaResumo}><Text style={s.resumoTxt}>Aluguéis</Text><Text style={s.resumoVal}>{lista.length}</Text></View>
-            {lista.some((h) => h.metodo === 'Sem cobrança') && (
+            {qtdSem > 0 && (
               <View style={s.linhaResumo}>
-                <Text style={s.resumoTxt}>Sem cobrança</Text>
-                <Text style={s.resumoVal}>{lista.filter((h) => h.metodo === 'Sem cobrança').length}</Text>
+                <Text style={[s.resumoTxt, { color: cor.ambar, fontWeight: '800' }]}>Encerrados sem cobrança</Text>
+                <Text style={[s.resumoVal, { color: cor.ambar }]}>{qtdSem}</Text>
+              </View>
+            )}
+            {valorSem > 0 && (
+              <View style={s.linhaResumo}>
+                <Text style={s.resumoTxt}>Valor não cobrado</Text>
+                <Text style={s.resumoVal}>{brl(valorSem)}</Text>
               </View>
             )}
             <View style={s.linhaResumo}><Text style={s.resumoTxt}>Tempo total</Text><Text style={s.resumoVal}>{Math.floor(seg / 60)} min</Text></View>
           </View>
 
           {lista.length === 0 && <Text style={s.vazio}>Sem aluguéis neste período.</Text>}
-          {lista.map((h) => (
-            <View key={h.id} style={s.itemHist}>
-              <View style={{ flex: 1 }}>
-                <Text style={s.tipo}>{rotuloHist(h)}</Text>
-                {h.itens && h.itens.length > 1 && (
+          {lista.map((h) => {
+            const sem = semCobranca(h);
+            return (
+              <View key={h.id} style={[s.itemHist, sem && { borderLeftWidth: 4, borderLeftColor: cor.ambar }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.tipo}>{rotuloHist(h)}</Text>
+                  {sem && (
+                    <Text style={[s.sub2, { color: cor.ambar, fontWeight: '800' }]}>ENCERRADO SEM COBRANÇA</Text>
+                  )}
+                  {h.itens && h.itens.length > 1 && (
+                    <Text style={s.sub2}>
+                      {h.itens.map((i) => `${i.rotulo || `${i.tipo} ${i.numero}`}: ${fmtTempoTexto(i.segundos)} (${brl(i.valor)})`).join('  |  ')}
+                    </Text>
+                  )}
                   <Text style={s.sub2}>
-                    {h.itens.map((i) => `${i.rotulo || `${i.tipo} ${i.numero}`}: ${fmtTempoTexto(i.segundos)} (${brl(i.valor)})`).join('  |  ')}
+                    {h.segundos > 0 ? `${fmtTempoTexto(h.segundos)} · ` : ''}{new Date(h.data).toLocaleString('pt-BR')} · {h.metodo}
+                    {h.metodo === 'Dinheiro' && h.troco > 0 ? ` · troco ${brl(h.troco)}` : ''}{h.motivo ? ` · ${h.motivo}` : ''}
                   </Text>
-                )}
-                <Text style={s.sub2}>
-                  {h.segundos > 0 ? `${fmtTempoTexto(h.segundos)} · ` : ''}{new Date(h.data).toLocaleString('pt-BR')} · {h.metodo}
-                  {h.metodo === 'Dinheiro' && h.troco > 0 ? ` · troco ${brl(h.troco)}` : ''}{h.motivo ? ` · ${h.motivo}` : ''}
-                </Text>
+                </View>
+                <Text style={[s.valorHist, sem && { color: cor.ambar, fontSize: 13 }]}>{sem ? 'Não cobrado' : brl(h.valor)}</Text>
               </View>
-              <Text style={s.valorHist}>{brl(h.valor)}</Text>
-            </View>
-          ))}
+            );
+          })}
 
           {lista.length > 0 && (
             <>

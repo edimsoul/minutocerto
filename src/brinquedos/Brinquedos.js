@@ -3,6 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, ScrollView, Modal, Alert, Vibr
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import Cobranca from '../telas/Cobranca';
 import Botao from '../componentes/Botao';
+import EscolhaCobranca from '../componentes/EscolhaCobranca';
 import LeitorQR from './LeitorQR';
 import { s } from '../estilos';
 import { cor } from '../tema';
@@ -22,59 +23,6 @@ const PAD_JANELA = { padding: 20, paddingBottom: 120 };
 
 function precisaEscolherCobranca(v) {
   return !!v.limite;
-}
-
-function OpcaoCobranca({ icone, titulo, detalhe, valor, tom, destaque, onPress }) {
-  return (
-    <TouchableOpacity
-      activeOpacity={0.85}
-      onPress={onPress}
-      style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: destaque ? tom + '14' : '#fff',
-        borderRadius: 14,
-        paddingVertical: 14,
-        paddingHorizontal: 14,
-        borderWidth: destaque ? 2 : 1,
-        borderColor: destaque ? tom : '#e5e7eb',
-        marginTop: 10,
-      }}>
-      <View
-        style={{
-          width: 42,
-          height: 42,
-          borderRadius: 21,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: destaque ? tom : '#f3f4f6',
-        }}>
-        <MaterialCommunityIcons name={icone} size={22} color={destaque ? '#fff' : cor.suave} />
-      </View>
-
-      <View style={{ flex: 1, marginLeft: 12 }}>
-        <Text style={{ fontSize: 15, fontWeight: '800', color: destaque ? '#000' : '#374151' }}>{titulo}</Text>
-        <Text style={{ fontSize: 12, color: cor.suave, marginTop: 2 }}>{detalhe}</Text>
-        {destaque && (
-          <View
-            style={{
-              alignSelf: 'flex-start',
-              marginTop: 6,
-              backgroundColor: tom,
-              borderRadius: 10,
-              paddingHorizontal: 8,
-              paddingVertical: 2,
-            }}>
-            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.3 }}>SUGERIDO</Text>
-          </View>
-        )}
-      </View>
-
-      <Text style={{ fontSize: destaque ? 18 : 16, fontWeight: '800', color: destaque ? tom : '#6b7280' }}>
-        {brl(valor)}
-      </Text>
-    </TouchableOpacity>
-  );
 }
 
 function AcoesBrinquedo({ v, brinq, aoIniciar, aoEncerrar, aoCobrar, aoMaisTempo, depois }) {
@@ -422,45 +370,20 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
 
       <Modal transparent animationType="slide" visible={!!decidindo} onRequestClose={cancelarDecisao}>
         <View style={s.fundoModal}>
-          <View style={s.modal}>
+          <View style={[s.modal, { maxHeight: '94%' }]}>
             <ScrollView contentContainerStyle={PAD_JANELA}>
-              {decidindo && (() => {
-                const esgotado = decorrido(decidindo, agora) >= decidindo.limite * 60000;
-                return (
-                  <View>
-                    <Text style={[s.modalTitulo, { marginBottom: 6 }]}>
-                      {esgotado ? 'Tempo esgotado' : 'Encerramento antecipado'}
-                    </Text>
-                    <Text style={[s.sub2, { marginBottom: 6 }]}>
-                      {rotuloBrinquedo(decidindo)} · {fmtTempo(decorrido(decidindo, agora))} de {decidindo.limite} min
-                    </Text>
-
-                    <OpcaoCobranca
-                      icone="cash-multiple"
-                      titulo="Valor integral"
-                      detalhe="Tempo contratado"
-                      valor={valorPacote(decidindo.limite, preco, tabela)}
-                      tom={cor.azul}
-                      destaque={esgotado}
-                      onPress={() => escolherModoCobranca('integral')}
-                    />
-
-                    <OpcaoCobranca
-                      icone="timer-sand"
-                      titulo="Só o tempo corrido"
-                      detalhe="Minutos realmente usados"
-                      valor={valorACobrar(decidindo, agora, preco, 'corrido', tabela)}
-                      tom={cor.verde}
-                      destaque={!esgotado}
-                      onPress={() => escolherModoCobranca('corrido')}
-                    />
-
-                    <TouchableOpacity onPress={cancelarDecisao}>
-                      <Text style={s.link}>Cancelar</Text>
-                    </TouchableOpacity>
-                  </View>
-                );
-              })()}
+              {decidindo && (
+                <EscolhaCobranca
+                  v={decidindo}
+                  limite={decidindo.limite}
+                  rotulo={`${rotuloBrinquedo(decidindo)}${decidindo.cor ? ` · ${decidindo.cor}` : ''}`}
+                  agora={agora}
+                  preco={preco}
+                  tabela={tabela}
+                  onEscolher={escolherModoCobranca}
+                  onCancelar={cancelarDecisao}
+                />
+              )}
             </ScrollView>
           </View>
         </View>

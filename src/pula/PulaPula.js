@@ -3,6 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, ScrollView, Alert, Modal, Vibr
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import Cobranca from '../telas/Cobranca';
 import Botao from '../componentes/Botao';
+import EscolhaCobranca from '../componentes/EscolhaCobranca';
 import { s } from '../estilos';
 import { cor, ICONES } from '../tema';
 import { brl, decorrido, fmtTempo } from '../util';
@@ -95,59 +96,6 @@ function SeletorTempo({ valor, onChange, preco, tabela }) {
   );
 }
 
-function OpcaoCobranca({ icone, titulo, detalhe, valor, tom, destaque, onPress }) {
-  return (
-    <TouchableOpacity
-      activeOpacity={0.85}
-      onPress={onPress}
-      style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: destaque ? tom + '14' : '#fff',
-        borderRadius: 14,
-        paddingVertical: 14,
-        paddingHorizontal: 14,
-        borderWidth: destaque ? 2 : 1,
-        borderColor: destaque ? tom : '#e5e7eb',
-        marginTop: 10,
-      }}>
-      <View
-        style={{
-          width: 42,
-          height: 42,
-          borderRadius: 21,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: destaque ? tom : '#f3f4f6',
-        }}>
-        <MaterialCommunityIcons name={icone} size={22} color={destaque ? '#fff' : cor.suave} />
-      </View>
-
-      <View style={{ flex: 1, marginLeft: 12 }}>
-        <Text style={{ fontSize: 15, fontWeight: '800', color: destaque ? '#000' : '#374151' }}>{titulo}</Text>
-        <Text style={{ fontSize: 12, color: cor.suave, marginTop: 2 }}>{detalhe}</Text>
-        {destaque && (
-          <View
-            style={{
-              alignSelf: 'flex-start',
-              marginTop: 6,
-              backgroundColor: tom,
-              borderRadius: 10,
-              paddingHorizontal: 8,
-              paddingVertical: 2,
-            }}>
-            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.3 }}>SUGERIDO</Text>
-          </View>
-        )}
-      </View>
-
-      <Text style={{ fontSize: destaque ? 18 : 16, fontWeight: '800', color: destaque ? tom : '#6b7280' }}>
-        {brl(valor)}
-      </Text>
-    </TouchableOpacity>
-  );
-}
-
 export default function PulaPula({ pula, config, onPagamento }) {
   const agora = useAgora();
   const [nome, setNome] = useState('');
@@ -162,11 +110,17 @@ export default function PulaPula({ pula, config, onPagamento }) {
   const [modoCobranca, setModoCobranca] = useState({});
   const [decidindoId, setDecidindoId] = useState(null);
 
+  const [encerrandoId, setEncerrandoId] = useState(null);
+  const [outraAberta, setOutraAberta] = useState(false);
+  const [outraTxt, setOutraTxt] = useState('');
+  const [pendOutra, setPendOutra] = useState(null);
+
   const preco = config.precoPula;
   const tabela = config.precosPacote;
   const cobrando = pula.itens.find((v) => v.id === cobrancaId);
   const editando = pula.itens.find((v) => v.id === editandoId);
   const decidindo = pula.itens.find((v) => v.id === decidindoId);
+  const encerrando = pula.itens.find((v) => v.id === encerrandoId);
 
   useEffect(() => {
     const novos = [];
@@ -183,6 +137,17 @@ export default function PulaPula({ pula, config, onPagamento }) {
       setAvisos((a) => [...a, ...novos]);
     }
   }, [agora]);
+
+  useEffect(() => {
+    if (!pendOutra) return;
+    const v = pula.itens.find((x) => x.id === pendOutra.id);
+    if (!v || v.status !== 'finalizado') return;
+    const h = montarHistorico([v], pendOutra.metodo, {}, { rotuloDe: rotuloPessoa, preco, tabela, modo: 'pula' });
+    onPagamento(h);
+    pula.liberar([v.id], h);
+    setPendOutra(null);
+    setModoCobranca({});
+  }, [pula.itens, pendOutra]);
 
   const fecharAviso = () => {
     Vibration.cancel();
@@ -221,12 +186,12 @@ export default function PulaPula({ pula, config, onPagamento }) {
       setDecidindoId(v.id);
       return;
     }
-    finalizar(v);
+    setEncerrandoId(v.id);
   };
 
   const finalizar = async (v, modoForcado) => {
     const modo = modoForcado ?? modoCobranca[v.id];
-    if (await pula.finalizar(v, { modoCobranca: modo, preco, tabela, agora })) setCobrancaId(v.id);
+    return pula.finalizar(v, { modoCobranca: modo, preco, tabela, agora });
   };
 
   const escolherModoCobranca = (modo) => {
@@ -234,10 +199,41 @@ export default function PulaPula({ pula, config, onPagamento }) {
     if (!v) return;
     setModoCobranca((m) => ({ ...m, [v.id]: modo }));
     setDecidindoId(null);
-    finalizar(v, modo);
+    setEncerrandoId(v.id);
   };
 
   const cancelarDecisao = () => setDecidindoId(null);
+
+  const cancelarEncerrar = () => {
+    const id = encerrandoId;
+    setEncerrandoId(null);
+    setOutraAberta(false);
+    setOutraTxt('');
+    if (id) {
+      setModoCobranca((m) => {
+        const { [id]: _, ...resto } = m;
+        return resto;
+      });
+    }
+  };
+
+  const encerrarPixDinheiro = async () => {
+    const v = encerrando;
+    if (!v) return;
+    setEncerrandoId(null);
+    if (await finalizar(v)) setCobrancaId(v.id);
+  };
+
+  const fecharOutra = () => { setOutraAberta(false); setOutraTxt(''); };
+
+  const encerrarOutraForma = async () => {
+    const v = encerrando;
+    if (!v) return;
+    const metodo = outraTxt.trim() || 'Outra forma';
+    fecharOutra();
+    setEncerrandoId(null);
+    if (await finalizar(v)) setPendOutra({ id: v.id, metodo });
+  };
 
   return (
     <>
@@ -409,46 +405,124 @@ export default function PulaPula({ pula, config, onPagamento }) {
           <ScrollView
             contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 20 }}
             keyboardShouldPersistTaps="handled">
-            {decidindo && (() => {
-              const esgotado = decorrido(decidindo, agora) >= decidindo.pacote * 60000;
-              return (
-                <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 18 }}>
-                  <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 4, color: '#000' }}>
-                    {esgotado ? 'Tempo esgotado' : 'Encerramento antecipado'}
-                  </Text>
-                  <Text style={{ color: cor.suave, marginBottom: 6 }}>
-                    {decidindo.numero} · {fmtTempo(decorrido(decidindo, agora))} de {decidindo.pacote} min
-                  </Text>
+            {decidindo && (
+              <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 18 }}>
+                <EscolhaCobranca
+                  v={decidindo}
+                  limite={decidindo.pacote}
+                  rotulo={decidindo.numero}
+                  agora={agora}
+                  preco={preco}
+                  tabela={tabela}
+                  onEscolher={escolherModoCobranca}
+                  onCancelar={cancelarDecisao}
+                />
+              </View>
+            )}
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
 
-                  <OpcaoCobranca
-                    icone="cash-multiple"
-                    titulo="Valor integral"
-                    detalhe="Pacote contratado"
-                    valor={valorPacote(decidindo.pacote, preco, tabela)}
-                    tom={cor.azul}
-                    destaque={esgotado}
-                    onPress={() => escolherModoCobranca('integral')}
-                  />
+      <Modal visible={!!encerrando && !outraAberta} transparent animationType="fade" onRequestClose={cancelarEncerrar}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <ScrollView
+            contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 20 }}
+            keyboardShouldPersistTaps="handled">
+            {encerrando && (
+              <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 18 }}>
+                <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 4, color: '#000' }}>Encerrar</Text>
+                <Text style={{ color: cor.suave, marginBottom: 6 }}>
+                  {encerrando.numero} · {fmtTempo(decorrido(encerrando, agora))}
+                  {encerrando.pacote ? ` de ${encerrando.pacote} min` : ' (tempo livre)'}
+                </Text>
+                <Text style={{ fontSize: 26, fontWeight: '900', color: cor.tinta, marginTop: 6 }}>
+                  Total: {brl(valorACobrar(encerrando, agora, preco, modoCobranca[encerrando.id], tabela))}
+                </Text>
 
-                  <OpcaoCobranca
-                    icone="timer-sand"
-                    titulo="Só o tempo corrido"
-                    detalhe="Minutos realmente usados"
-                    valor={valorACobrar(decidindo, agora, preco, 'corrido', tabela)}
-                    tom={cor.verde}
-                    destaque={!esgotado}
-                    onPress={() => escolherModoCobranca('corrido')}
-                  />
+                <TouchableOpacity
+                  onPress={encerrarPixDinheiro}
+                  activeOpacity={0.8}
+                  style={{
+                    marginTop: 18,
+                    backgroundColor: cor.verde,
+                    borderRadius: 12,
+                    paddingVertical: 16,
+                    alignItems: 'center',
+                    minHeight: 54,
+                  }}>
+                  <Text style={{ color: '#fff', fontSize: 17, fontWeight: '800' }}>Pix / Dinheiro</Text>
+                </TouchableOpacity>
 
-                  <TouchableOpacity
-                    onPress={cancelarDecisao}
-                    activeOpacity={0.8}
-                    style={{ marginTop: 14, alignItems: 'center', paddingVertical: 10 }}>
-                    <Text style={{ color: cor.suave, fontWeight: '700' }}>Cancelar</Text>
-                  </TouchableOpacity>
-                </View>
-              );
-            })()}
+                <TouchableOpacity
+                  onPress={() => setOutraAberta(true)}
+                  activeOpacity={0.8}
+                  style={{
+                    marginTop: 10,
+                    backgroundColor: cor.azul,
+                    borderRadius: 12,
+                    paddingVertical: 16,
+                    alignItems: 'center',
+                    minHeight: 54,
+                  }}>
+                  <Text style={{ color: '#fff', fontSize: 17, fontWeight: '800' }}>Outra forma</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={cancelarEncerrar}
+                  activeOpacity={0.8}
+                  style={{ marginTop: 12, alignItems: 'center', paddingVertical: 10 }}>
+                  <Text style={{ color: cor.suave, fontWeight: '700' }}>Cancelar</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal visible={outraAberta && !!encerrando} transparent animationType="fade" onRequestClose={fecharOutra}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <ScrollView
+            contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 20 }}
+            keyboardShouldPersistTaps="handled">
+            {encerrando && (
+              <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 18 }}>
+                <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 4, color: '#000' }}>Pagar de outra forma</Text>
+                <Text style={{ color: cor.suave, marginBottom: 6 }}>
+                  {encerrando.numero} · Total: {brl(valorACobrar(encerrando, agora, preco, modoCobranca[encerrando.id], tabela))}
+                </Text>
+                <TextInput
+                  style={[s.input, TEXTO_INPUT, { fontSize: 18, fontWeight: '700', marginTop: 10 }]}
+                  placeholder="Ex.: Cartão, Fiado, Cortesia"
+                  placeholderTextColor={COR_PLACEHOLDER}
+                  value={outraTxt}
+                  onChangeText={setOutraTxt}
+                  autoFocus
+                />
+                <TouchableOpacity
+                  onPress={encerrarOutraForma}
+                  activeOpacity={0.8}
+                  style={{
+                    marginTop: 18,
+                    backgroundColor: cor.verde,
+                    borderRadius: 12,
+                    paddingVertical: 16,
+                    alignItems: 'center',
+                    minHeight: 54,
+                  }}>
+                  <Text style={{ color: '#fff', fontSize: 17, fontWeight: '800' }}>Encerrar e registrar pagamento</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={fecharOutra}
+                  activeOpacity={0.8}
+                  style={{ marginTop: 12, alignItems: 'center', paddingVertical: 10 }}>
+                  <Text style={{ color: cor.suave, fontWeight: '700' }}>Voltar</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </ScrollView>
         </KeyboardAvoidingView>
       </Modal>

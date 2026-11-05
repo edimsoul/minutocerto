@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert, ScrollView, StyleSheet, AppState, BackHandler } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert, ScrollView, StyleSheet, AppState, BackHandler, Keyboard } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { temToken, lerStatus, fazerBackup, apagarBackupNuvem, ativarBackupLivre, baixarUltimo, restaurar } from '../backup';
 import { CHAVES, lerJSON } from '../armazenamento';
@@ -7,6 +7,7 @@ import { s } from '../estilos';
 import { cor } from '../tema';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ERRO_PADRAO = 'Não foi possível concluir. Confira a internet e tente de novo.';
 const dataBR = (ms) =>
   new Date(ms).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
@@ -16,6 +17,12 @@ export default function BackupTela() {
   const [email, setEmail] = useState('');
   const [carreg, setCarreg] = useState(false);
   const [msg, setMsg] = useState('');
+  const [erro, setErro] = useState(false);
+
+  const avisar = (texto, ehErro = false) => {
+    setMsg(texto || (ehErro ? ERRO_PADRAO : ''));
+    setErro(ehErro);
+  };
 
   const recarregar = useCallback(async () => {
     try {
@@ -35,42 +42,73 @@ export default function BackupTela() {
 
   const ativar = async () => {
     if (carreg) return;
+    Keyboard.dismiss();
     const em = email.trim().toLowerCase();
-    if (!EMAIL.test(em)) return setMsg('Digite um e-mail válido.');
-    setCarreg(true); setMsg('');
-    const r = await ativarBackupLivre(em);
-    if (!r.ok) { setCarreg(false); return setMsg(r.erro); }
-    const b = await fazerBackup({ forcar: true });
-    setCarreg(false);
-    setEmail('');
-    await recarregar();
-    setMsg(b.ok ? (b.pulou === 'vazio' ? 'Backup ativado. Ele começa quando houver dados.' : 'Backup ativado e enviado.') : 'Backup ativado, mas o envio falhou: ' + (b.erro || 'tente de novo.'));
+    if (!EMAIL.test(em)) return avisar('Digite um e-mail válido.', true);
+    setCarreg(true);
+    avisar('Ativando, aguarde...');
+    try {
+      const r = await ativarBackupLivre(em);
+      if (!r || !r.ok) {
+        avisar(r && r.erro, true);
+        return;
+      }
+      let b = { ok: false };
+      try {
+        b = (await fazerBackup({ forcar: true })) || { ok: false };
+      } catch (err) {
+        b = { ok: false, erro: err && err.message };
+      }
+      setEmail('');
+      await recarregar();
+      if (b.ok) {
+        avisar(b.pulou === 'vazio' ? 'Backup ativado. Ele começa quando houver dados.' : 'Backup ativado e enviado.');
+      } else {
+        avisar('Backup ativado, mas o envio falhou: ' + (b.erro || 'tente de novo.'), true);
+      }
+    } catch (err) {
+      avisar((err && err.message) || ERRO_PADRAO, true);
+    } finally {
+      setCarreg(false);
+    }
   };
 
   const fazerAgora = async () => {
     if (carreg) return;
-    setCarreg(true); setMsg('');
-    const r = await fazerBackup({ forcar: true });
-    setCarreg(false);
-    await recarregar();
-    if (!r.ok) return setMsg(r.erro || 'Não foi possível enviar o backup.');
-    setMsg(r.pulou === 'vazio' ? 'Ainda não há dados para guardar.' : 'Backup enviado com sucesso.');
+    setCarreg(true);
+    avisar('Enviando, aguarde...');
+    try {
+      const r = (await fazerBackup({ forcar: true })) || { ok: false };
+      await recarregar();
+      if (!r.ok) return avisar(r.erro, true);
+      avisar(r.pulou === 'vazio' ? 'Ainda não há dados para guardar.' : 'Backup enviado com sucesso.');
+    } catch (err) {
+      avisar((err && err.message) || ERRO_PADRAO, true);
+    } finally {
+      setCarreg(false);
+    }
   };
 
-  // baixa o backup mais recente e, se a pessoa confirmar, grava no celular
   const restaurarDaNuvem = async () => {
     if (carreg) return;
-    setCarreg(true); setMsg('');
-    const b = await baixarUltimo();
-    setCarreg(false);
-    if (!b.ok) {
-      await recarregar();
-      return setMsg(b.erro || 'Não foi possível baixar o backup.');
+    setCarreg(true);
+    avisar('Buscando backup, aguarde...');
+    let b;
+    try {
+      b = await baixarUltimo();
+    } catch (err) {
+      b = { ok: false, erro: err && err.message };
     }
+    setCarreg(false);
+    if (!b || !b.ok) {
+      await recarregar();
+      return avisar(b && b.erro, true);
+    }
+    avisar('');
     const d = b.dados;
     const resumo =
       `Backup de ${dataBR(b.criadoEm)}:\n` +
-      `${d.brinquedos.length} brinquedos, ${(d.pula || []).length} pula-pula e ${d.historico.length} registros no histórico.\n\n` +
+      `${(d.brinquedos || []).length} brinquedos, ${(d.pula || []).length} pula-pula e ${(d.historico || []).length} registros no histórico.\n\n` +
       'Os dados atuais deste celular serão substituídos. Seu usuário e senha não mudam.';
     Alert.alert('Restaurar da nuvem', resumo, [
       { text: 'Cancelar', style: 'cancel' },
@@ -78,9 +116,9 @@ export default function BackupTela() {
         text: 'Restaurar',
         style: 'destructive',
         onPress: async () => {
-          setCarreg(true); setMsg('');
+          setCarreg(true);
+          avisar('');
           try {
-            // mantém usuário/senha deste aparelho (o backup nunca leva a senha)
             const atual = await lerJSON(CHAVES.config, {});
             const config = { ...(d.config || {}) };
             ['usuario', 'senhaHash', 'salt'].forEach((k) => {
@@ -96,7 +134,7 @@ export default function BackupTela() {
             );
           } catch (err) {
             setCarreg(false);
-            setMsg('Não foi possível restaurar. Nada foi alterado; tente de novo.');
+            avisar('Não foi possível restaurar. Nada foi alterado; tente de novo.', true);
           }
         },
       },
@@ -110,10 +148,17 @@ export default function BackupTela() {
         text: 'Excluir',
         style: 'destructive',
         onPress: async () => {
-          setCarreg(true); setMsg('');
-          const r = await apagarBackupNuvem();
-          setCarreg(false);
-          setMsg(r.ok ? 'Backup da nuvem excluído.' : (r.erro || 'Não foi possível excluir.'));
+          setCarreg(true);
+          avisar('');
+          try {
+            const r = (await apagarBackupNuvem()) || { ok: false };
+            if (r.ok) avisar('Backup da nuvem excluído.');
+            else avisar(r.erro || 'Não foi possível excluir.', true);
+          } catch (err) {
+            avisar((err && err.message) || ERRO_PADRAO, true);
+          } finally {
+            setCarreg(false);
+          }
         },
       },
     ]);
@@ -146,13 +191,16 @@ export default function BackupTela() {
           <>
             <Text style={e.txt}>Digite seu e-mail para ativar o backup. Ele guarda seus dados na nuvem e é enviado sozinho uma vez por dia.</Text>
             <TextInput
-              style={s.input}
+              style={[s.input, { color: '#000000' }]}
               placeholder="Seu e-mail"
+              placeholderTextColor="#6b7280"
               autoCapitalize="none"
               autoCorrect={false}
               keyboardType="email-address"
               value={email}
               onChangeText={setEmail}
+              onSubmitEditing={ativar}
+              returnKeyType="go"
             />
             <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.verde }, carreg && { opacity: 0.6 }]} onPress={ativar} disabled={carreg}>
               {carreg ? <ActivityIndicator color={cor.branco} /> : <Text style={s.botaoGrandeTxt}>Ativar backup</Text>}
@@ -173,7 +221,11 @@ export default function BackupTela() {
           </>
         )}
 
-        {!!msg && <Text style={{ color: cor.azul, marginTop: 12, lineHeight: 20 }}>{msg}</Text>}
+        {!!msg && (
+          <Text style={{ color: erro ? cor.vermelho : cor.azul, marginTop: 12, lineHeight: 20, fontWeight: erro ? '700' : '400' }}>
+            {msg}
+          </Text>
+        )}
       </View>
     </ScrollView>
   );
