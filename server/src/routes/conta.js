@@ -60,7 +60,7 @@ module.exports = (grupoRouter) => {
   }));
 
   // ordem importa: autentica -> limita simultâneas -> lê o body -> limita por aparelho
-  router.post('/sincronizar', ...doAparelho, limitarSimultaneas(8), jsonSync, limite(10), rota(async (req, res) => {
+  router.post('/sincronizar', ...doAparelho, limitarSimultaneas(25), jsonSync, limite(10), rota(async (req, res) => {
     const { dados, versao } = req.body || {};
     if (!dados || typeof dados !== 'object' || Array.isArray(dados)) throw falha(400, 'Envie "dados" como objeto.');
     const limpo = limpar(dados);
