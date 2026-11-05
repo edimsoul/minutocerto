@@ -171,6 +171,7 @@ async function atualizarPagamento(mpId, token) {
 }
 
 // ---------- assinatura do webhook ----------
+const SEGREDOS_WEBHOOK = String(MP_WEBHOOK_SECRET || '').split(',').map((x) => x.trim()).filter(Boolean);
 function assinaturaValida(req, dataId) {
   const cab = req.get('x-signature');
   const reqId = req.get('x-request-id');
@@ -182,8 +183,9 @@ function assinaturaValida(req, dataId) {
   }
   if (!partes.ts || !partes.v1) return false;
   const manifesto = `id:${dataId.toLowerCase()};request-id:${reqId};ts:${partes.ts};`;
-  const esperado = crypto.createHmac('sha256', MP_WEBHOOK_SECRET).update(manifesto).digest('hex');
-  return igual(esperado, partes.v1);
+  // aceita mais de um segredo (separados por vírgula): uma aplicação do MP para cada token
+  return SEGREDOS_WEBHOOK.some((seg) =>
+    igual(crypto.createHmac('sha256', seg).update(manifesto).digest('hex'), partes.v1));
 }
 
 // ---------- OAuth ----------
