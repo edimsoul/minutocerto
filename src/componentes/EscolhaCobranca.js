@@ -4,7 +4,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { s } from '../estilos';
 import { cor } from '../tema';
 import { brl, decorrido, fmtTempo } from '../util';
-import { valorPacote, valorACobrar, TOLERANCIA_MIN } from '../valores';
+import { valorPacote, valorACobrar, descontarPago, TOLERANCIA_MIN } from '../valores';
 
 function Cartao({ icone, titulo, detalhe, valor, tom, sugerido, onPress }) {
   const fundo = sugerido ? tom : '#ffffff';
@@ -72,8 +72,10 @@ export default function EscolhaCobranca({ v, limite, rotulo, agora, preco, tabel
   const limMs = limite * 60000;
   const tolMs = TOLERANCIA_MIN * 60000;
   const fase = ms < limMs ? 'antes' : ms <= limMs + tolMs ? 'tolerancia' : 'extra';
+  const jaPago = Number(v.pago) || 0;
 
-  const vIntegral = valorPacote(limite, preco, tabela);
+  // Todos os valores abaixo já descontam o que foi pago antecipado.
+  const vIntegral = descontarPago(valorPacote(limite, preco, tabela), v);
   const vCorrido = valorACobrar(v, agora, preco, 'corrido', tabela);
   const vExtra = valorACobrar(v, agora, preco, undefined, tabela);
 
@@ -91,6 +93,25 @@ export default function EscolhaCobranca({ v, limite, rotulo, agora, preco, tabel
     <View>
       <Text style={[s.modalTitulo, { marginBottom: 2 }]}>Como cobrar?</Text>
       <Text style={[s.sub2, { marginBottom: 12 }]}>{rotulo}</Text>
+
+      {jaPago > 0 && (
+        <View
+          style={{
+            backgroundColor: cor.verde + '18',
+            borderRadius: 12,
+            padding: 10,
+            marginBottom: 10,
+            borderWidth: 1,
+            borderColor: cor.verde + '55',
+          }}>
+          <Text style={{ color: cor.verde, fontWeight: '800', fontSize: 14 }}>
+            ✔ Já pago antecipado: {brl(jaPago)}
+          </Text>
+          <Text style={{ color: cor.suave, fontSize: 12, marginTop: 2 }}>
+            Os valores abaixo já estão descontados.
+          </Text>
+        </View>
+      )}
 
       <View
         style={{

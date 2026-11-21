@@ -14,6 +14,7 @@ import { montarHistorico } from '../historico';
 const STATUS = { rodando: 'Brincando', pausado: 'Pausado', finalizado: 'Aguardando pagamento' };
 const COR_STATUS = { rodando: cor.verde, pausado: cor.ambar, finalizado: cor.vermelho };
 const rotuloPessoa = (v) => v.numero;
+const arred2 = (n) => Math.round(n * 100) / 100;
 
 export const PREDEFINIDOS = [5, 10, 15, 20, 25, 30];
 const PADRAO_VIBRACAO = [0, 600, 300, 600, 300, 600];
@@ -96,6 +97,62 @@ function SeletorTempo({ valor, onChange, preco, tabela }) {
   );
 }
 
+// Escolha de minutos a SOMAR ao tempo já contratado (não troca o total).
+function SeletorAcrescimo({ valor, onChange }) {
+  const ehOutro = valor != null && !PREDEFINIDOS.includes(valor);
+  const [outro, setOutro] = useState(ehOutro);
+  const [txt, setTxt] = useState('');
+
+  const chip = (rotulo, ativo, onPress) => (
+    <TouchableOpacity
+      key={rotulo}
+      onPress={onPress}
+      style={{
+        paddingVertical: 10,
+        paddingHorizontal: 14,
+        borderRadius: 20,
+        borderWidth: 1.5,
+        borderColor: ativo ? cor.azul : '#d1d5db',
+        backgroundColor: ativo ? cor.azul : '#fff',
+      }}>
+      <Text style={{ fontWeight: '700', color: ativo ? '#fff' : '#374151' }}>{rotulo}</Text>
+    </TouchableOpacity>
+  );
+
+  return (
+    <View>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        {PREDEFINIDOS.map((m) =>
+          chip(`+ ${m} min`, !outro && valor === m, () => { setOutro(false); onChange(m); })
+        )}
+        {chip('Outro', outro, () => {
+          setOutro(true);
+          const n = parseInt(txt, 10);
+          onChange(n > 0 ? n : null);
+        })}
+      </View>
+      {outro && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10, gap: 8 }}>
+          <TextInput
+            style={[s.input, TEXTO_INPUT, { width: 100 }]}
+            placeholder="Minutos"
+            placeholderTextColor={COR_PLACEHOLDER}
+            keyboardType="number-pad"
+            value={txt}
+            onChangeText={(t2) => {
+              const limpo = t2.replace(/[^0-9]/g, '');
+              setTxt(limpo);
+              const n = parseInt(limpo, 10);
+              onChange(n > 0 ? n : null);
+            }}
+          />
+          <Text style={{ color: cor.suave, fontWeight: '600' }}>minutos a mais</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
 export default function PulaPula({ pula, config, onPagamento }) {
   const agora = useAgora();
   const [nome, setNome] = useState('');
@@ -115,12 +172,28 @@ export default function PulaPula({ pula, config, onPagamento }) {
   const [outraTxt, setOutraTxt] = useState('');
   const [pendOutra, setPendOutra] = useState(null);
 
+  // Pagamento antecipado
+  const [antecip, setAntecip] = useState(false);
+  const [antecipMais, setAntecipMais] = useState(false);
+  const [maisPula, setMaisPula] = useState(null);   // minutos a somar no "+ Tempo"
+  const [modoEdit, setModoEdit] = useState('somar'); // 'somar' (tem pacote) ou 'definir' (estava livre)
+  const [antCobr, setAntCobr] = useState(null); // { id, valor, descricao }
+
   const preco = config.precoPula;
   const tabela = config.precosPacote;
   const cobrando = pula.itens.find((v) => v.id === cobrancaId);
   const editando = pula.itens.find((v) => v.id === editandoId);
   const decidindo = pula.itens.find((v) => v.id === decidindoId);
   const encerrando = pula.itens.find((v) => v.id === encerrandoId);
+  const antItem = antCobr ? pula.itens.find((v) => v.id === antCobr.id) : null;
+  const totalEnc = encerrando
+    ? valorACobrar(encerrando, agora, preco, modoCobranca[encerrando.id], tabela)
+    : 0;
+  // Ao ampliar o tempo: pacote do novo total menos o que já foi pago.
+  const totalEdit = editando && editando.pacote ? editando.pacote + (maisPula || 0) : 0;
+  const difEdit = totalEdit
+    ? Math.max(0, arred2(valorPacote(totalEdit, preco, tabela) - (Number(editando.pago) || 0)))
+    : 0;
 
   useEffect(() => {
     const novos = [];
@@ -155,10 +228,16 @@ export default function PulaPula({ pula, config, onPagamento }) {
   };
 
   const excluir = (v) =>
-    Alert.alert('Excluir', `Excluir ${v.numero} sem cobrar?`, [
-      { text: 'Cancelar' },
-      { text: 'Excluir', style: 'destructive', onPress: () => pula.excluir(v.id) },
-    ]);
+    Alert.alert(
+      'Excluir',
+      Number(v.pago) > 0
+        ? `${v.numero} já pagou ${brl(v.pago)} antecipado (fica no relatório, sem devolução automática). Excluir mesmo assim?`
+        : `Excluir ${v.numero} sem cobrar?`,
+      [
+        { text: 'Cancelar' },
+        { text: 'Excluir', style: 'destructive', onPress: () => pula.excluir(v.id) },
+      ]
+    );
 
   const iniciar = () => {
     if (!nome.trim()) {
@@ -166,19 +245,29 @@ export default function PulaPula({ pula, config, onPagamento }) {
       return;
     }
     setPacoteModal(null);
+    setAntecip(false);
     setEscolhendoTempo(true);
   };
 
   const confirmarTempo = () => {
-    pula.adicionar(nome, pacoteModal);
+    const n = nome;
+    if (antecip && pacoteModal) {
+      const id = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+      pula.adicionar(n, pacoteModal, id);
+      setAntCobr({ id, valor: valorPacote(pacoteModal, preco, tabela), descricao: `${pacoteModal} min` });
+    } else {
+      pula.adicionar(n, pacoteModal);
+    }
     setNome('');
     setPacoteModal(null);
     setEscolhendoTempo(false);
+    setAntecip(false);
   };
 
   const cancelarTempo = () => {
     setPacoteModal(null);
     setEscolhendoTempo(false);
+    setAntecip(false);
   };
 
   const fim = (v) => {
@@ -222,6 +311,40 @@ export default function PulaPula({ pula, config, onPagamento }) {
     if (!v) return;
     setEncerrandoId(null);
     if (await finalizar(v)) setCobrancaId(v.id);
+  };
+
+  const encerrarQuitado = async () => {
+    const v = encerrando;
+    if (!v) return;
+    setEncerrandoId(null);
+    if (await finalizar(v)) setPendOutra({ id: v.id, metodo: 'Pago antecipado' });
+  };
+
+  const abrirEdicao = (v) => {
+    setMaisPula(null);
+    setAntecipMais(false);
+    setModoEdit(v.pacote ? 'somar' : 'definir');
+    setEditandoId(v.id);
+  };
+
+  const fecharEdicao = () => { setEditandoId(null); setAntecipMais(false); setMaisPula(null); };
+
+  const concluirEdicao = () => {
+    const v = editando;
+    if (!v) { fecharEdicao(); return; }
+    let total = v.pacote || 0;
+    if (modoEdit === 'somar') {
+      if (!maisPula) return;
+      total = v.pacote + maisPula;
+      pula.alterarPacote(v, total); // soma ao que já estava contratado
+    }
+    const dif = total
+      ? Math.max(0, arred2(valorPacote(total, preco, tabela) - (Number(v.pago) || 0)))
+      : 0;
+    const cobrar = antecipMais && dif > 0.005;
+    const desc = modoEdit === 'somar' ? `+${maisPula} min (total ${total} min)` : `total ${total} min`;
+    fecharEdicao();
+    if (cobrar) setAntCobr({ id: v.id, valor: dif, descricao: desc });
   };
 
   const fecharOutra = () => { setOutraAberta(false); setOutraTxt(''); };
@@ -310,10 +433,13 @@ export default function PulaPula({ pula, config, onPagamento }) {
                   <Text style={{ color: cor.suave, fontWeight: '600', marginTop: 2 }}>
                     {temPacote ? `Pacote de ${v.pacote} min` : 'Livre (por minutos)'}
                   </Text>
+                  {v.pago > 0 && (
+                    <Text style={{ color: cor.verde, fontWeight: '800', marginTop: 2 }}>✔ Pago antecipado: {brl(v.pago)}</Text>
+                  )}
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
                   <Text style={s.relogio}>{fmtTempo(ms)}</Text>
-                  <Text style={s.valorAoVivo}>{brl(valorAoVivo)}</Text>
+                  <Text style={s.valorAoVivo}>{v.pago > 0 ? 'Falta ' : ''}{brl(valorAoVivo)}</Text>
                 </View>
               </View>
 
@@ -339,7 +465,7 @@ export default function PulaPula({ pula, config, onPagamento }) {
                   <Botao txt="Fim" c={cor.vermelho} onPress={() => fim(v)} />
                 </>)}
                 {v.status !== 'finalizado' && (
-                  <Botao txt="+ Tempo" c={cor.azul} onPress={() => setEditandoId(v.id)} />
+                  <Botao txt="+ Tempo" c={cor.azul} onPress={() => abrirEdicao(v)} />
                 )}
                 {v.status === 'finalizado' && <Botao txt="Cobrar" c={cor.azul} onPress={() => setCobrancaId(v.id)} />}
               </View>
@@ -370,6 +496,21 @@ export default function PulaPula({ pula, config, onPagamento }) {
 
               <SeletorTempo valor={pacoteModal} onChange={setPacoteModal} preco={preco} tabela={tabela} />
 
+              {pacoteModal != null && (
+                <TouchableOpacity
+                  onPress={() => setAntecip((a) => !a)}
+                  activeOpacity={0.8}
+                  style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16 }}>
+                  <MaterialCommunityIcons
+                    name={antecip ? 'checkbox-marked' : 'checkbox-blank-outline'} size={26}
+                    color={antecip ? cor.azul : cor.suave}
+                  />
+                  <Text style={{ marginLeft: 10, fontWeight: '700', color: cor.tinta }}>
+                    Pagar antecipado ({brl(valorPacote(pacoteModal, preco, tabela))})
+                  </Text>
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity
                 onPress={confirmarTempo}
                 activeOpacity={0.8}
@@ -383,7 +524,11 @@ export default function PulaPula({ pula, config, onPagamento }) {
                   minHeight: 54,
                 }}>
                 <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800' }}>
-                  {pacoteModal == null ? 'Iniciar · tempo livre' : `Iniciar · ${pacoteModal} min`}
+                  {pacoteModal == null
+                    ? 'Iniciar · tempo livre'
+                    : antecip
+                    ? `Iniciar e cobrar · ${pacoteModal} min`
+                    : `Iniciar · ${pacoteModal} min`}
                 </Text>
               </TouchableOpacity>
 
@@ -438,9 +583,30 @@ export default function PulaPula({ pula, config, onPagamento }) {
                   {encerrando.pacote ? ` de ${encerrando.pacote} min` : ' (tempo livre)'}
                 </Text>
                 <Text style={{ fontSize: 26, fontWeight: '900', color: cor.tinta, marginTop: 6 }}>
-                  Total: {brl(valorACobrar(encerrando, agora, preco, modoCobranca[encerrando.id], tabela))}
+                  {Number(encerrando.pago) > 0 ? 'Falta pagar' : 'Total'}: {brl(totalEnc)}
                 </Text>
+                {Number(encerrando.pago) > 0 && (
+                  <Text style={{ color: cor.verde, fontWeight: '700', marginTop: 4 }}>
+                    ✔ Já pago antecipado: {brl(encerrando.pago)}
+                  </Text>
+                )}
 
+                {totalEnc < 0.005 ? (
+                  <TouchableOpacity
+                    onPress={encerrarQuitado}
+                    activeOpacity={0.8}
+                    style={{
+                      marginTop: 18,
+                      backgroundColor: cor.verde,
+                      borderRadius: 12,
+                      paddingVertical: 16,
+                      alignItems: 'center',
+                      minHeight: 54,
+                    }}>
+                    <Text style={{ color: '#fff', fontSize: 17, fontWeight: '800' }}>Encerrar (já pago)</Text>
+                  </TouchableOpacity>
+                ) : (
+                <>
                 <TouchableOpacity
                   onPress={encerrarPixDinheiro}
                   activeOpacity={0.8}
@@ -468,6 +634,8 @@ export default function PulaPula({ pula, config, onPagamento }) {
                   }}>
                   <Text style={{ color: '#fff', fontSize: 17, fontWeight: '800' }}>Outra forma</Text>
                 </TouchableOpacity>
+                </>
+                )}
 
                 <TouchableOpacity
                   onPress={cancelarEncerrar}
@@ -527,7 +695,7 @@ export default function PulaPula({ pula, config, onPagamento }) {
         </KeyboardAvoidingView>
       </Modal>
 
-      <Modal visible={!!editando} transparent animationType="fade" onRequestClose={() => setEditandoId(null)}>
+      <Modal visible={!!editando} transparent animationType="fade" onRequestClose={fecharEdicao}>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}>
@@ -537,20 +705,59 @@ export default function PulaPula({ pula, config, onPagamento }) {
             {editando && (
               <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 18 }}>
                 <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 4, color: '#000' }}>
-                  Tempo de {editando.numero}
+                  {modoEdit === 'somar' ? 'Adicionar tempo' : 'Tempo'} de {editando.numero}
                 </Text>
-                <Text style={{ color: cor.suave, marginBottom: 14 }}>
-                  O relógio não zera: o novo tempo vale a partir do que já passou.
-                </Text>
-                <SeletorTempo
-                  key={editando.id}
-                  valor={editando.pacote || null}
-                  onChange={(m) => pula.alterarPacote(editando, m)}
-                  preco={preco}
-                  tabela={tabela}
-                />
+
+                {modoEdit === 'somar' ? (
+                  <>
+                    <Text style={{ color: cor.suave, marginBottom: 14 }}>
+                      Contratado: {editando.pacote} min. O tempo escolhido é somado ao que já está em andamento.
+                    </Text>
+                    <SeletorAcrescimo valor={maisPula} onChange={setMaisPula} />
+                    {!!maisPula && (
+                      <Text style={{ color: cor.tinta, fontWeight: '800', marginTop: 14 }}>
+                        Novo total: {totalEdit} min · {brl(valorPacote(totalEdit, preco, tabela))}
+                      </Text>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <Text style={{ color: cor.suave, marginBottom: 14 }}>
+                      Esta pessoa está em tempo livre. Escolha o pacote total (o relógio não zera).
+                    </Text>
+                    <SeletorTempo
+                      key={editando.id}
+                      valor={editando.pacote || null}
+                      onChange={(m) => pula.alterarPacote(editando, m)}
+                      preco={preco}
+                      tabela={tabela}
+                    />
+                  </>
+                )}
+
+                {Number(editando.pago) > 0 && (
+                  <Text style={{ color: cor.verde, fontWeight: '700', marginTop: 14 }}>
+                    ✔ Já pago antecipado: {brl(editando.pago)}
+                  </Text>
+                )}
+                {!!totalEdit && difEdit > 0.005 && (
+                  <TouchableOpacity
+                    onPress={() => setAntecipMais((a) => !a)}
+                    activeOpacity={0.8}
+                    style={{ flexDirection: 'row', alignItems: 'center', marginTop: 14 }}>
+                    <MaterialCommunityIcons
+                      name={antecipMais ? 'checkbox-marked' : 'checkbox-blank-outline'} size={26}
+                      color={antecipMais ? cor.azul : cor.suave}
+                    />
+                    <Text style={{ marginLeft: 10, fontWeight: '700', color: cor.tinta, flex: 1 }}>
+                      Pagar antecipado só a diferença ({brl(difEdit)})
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
                 <TouchableOpacity
-                  onPress={() => setEditandoId(null)}
+                  onPress={concluirEdicao}
+                  disabled={modoEdit === 'somar' && !maisPula}
                   activeOpacity={0.8}
                   style={{
                     marginTop: 20,
@@ -560,8 +767,26 @@ export default function PulaPula({ pula, config, onPagamento }) {
                     alignItems: 'center',
                     alignSelf: 'stretch',
                     minHeight: 54,
+                    opacity: modoEdit === 'somar' && !maisPula ? 0.4 : 1,
                   }}>
-                  <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800' }}>Pronto</Text>
+                  <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800' }}>
+                    {modoEdit === 'somar'
+                      ? !maisPula
+                        ? 'Escolha o tempo a somar'
+                        : antecipMais && difEdit > 0.005
+                        ? `Somar + ${maisPula} min e cobrar ${brl(difEdit)}`
+                        : `Somar + ${maisPula} min (total ${totalEdit} min)`
+                      : antecipMais && difEdit > 0.005
+                      ? `Pronto e cobrar ${brl(difEdit)}`
+                      : 'Pronto'}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={fecharEdicao}
+                  activeOpacity={0.8}
+                  style={{ marginTop: 12, alignItems: 'center', paddingVertical: 10 }}>
+                  <Text style={{ color: cor.suave, fontWeight: '700' }}>Cancelar</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -581,6 +806,24 @@ export default function PulaPula({ pula, config, onPagamento }) {
             pula.liberar(lista.map((v) => v.id), h);
             setCobrancaId(null);
             setModoCobranca({});
+          }}
+        />
+      )}
+
+      {antItem && (
+        <Cobranca
+          principal={antItem} itens={pula.itens} preco={preco} tabela={tabela} token={config.token}
+          rotuloDe={rotuloPessoa}
+          antecipado={antCobr}
+          onFinalizarOutro={pula.finalizarOutro}
+          onFechar={() => setAntCobr(null)}
+          onPago={(metodo, lista, extra) => {
+            const h = montarHistorico(lista, metodo, extra, {
+              rotuloDe: rotuloPessoa, preco, tabela, modo: 'pula', valorFixo: antCobr.valor,
+            });
+            onPagamento(h);
+            pula.registrarPago(antItem.id, antCobr.valor);
+            setAntCobr(null);
           }}
         />
       )}

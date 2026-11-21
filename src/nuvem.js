@@ -2,7 +2,7 @@
   import * as SecureStore from 'expo-secure-store';
   import * as Crypto from 'expo-crypto';
 
-  export const SERVIDOR = 'https://minutocerto.onrender.com';
+  export const SERVIDOR = 'https://minutocerto-r8lu.onrender.com';
   export const APP_KEY = 'minuto2026chaveapp';
 
   export const URL_PRIVACIDADE = `${SERVIDOR}/privacidade`;

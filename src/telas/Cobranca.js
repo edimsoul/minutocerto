@@ -13,7 +13,7 @@ const fmtCent = (c) => {
   return i.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + d;
 };
 
-export default function Cobranca({ principal, itens, preco, tabela, rotuloDe, onFinalizarOutro, onFechar, onPago }) {
+export default function Cobranca({ principal, itens, preco, tabela, rotuloDe, onFinalizarOutro, onFechar, onPago, antecipado }) {
   const [extras, setExtras] = useState([]);
   const [modo, setModo] = useState('escolha');
   const [centavos, setCentavos] = useState(0);
@@ -23,7 +23,7 @@ export default function Cobranca({ principal, itens, preco, tabela, rotuloDe, on
   const [outro, setOutro] = useState('');
 
   useEffect(() => {
-    if (principal.status === 'livre') onFechar();
+    if (!antecipado && principal.status === 'livre') onFechar();
   }, [principal.status]);
 
   const cancelarPixAtual = () => {
@@ -39,9 +39,14 @@ export default function Cobranca({ principal, itens, preco, tabela, rotuloDe, on
     fechar();
   };
 
-  const outros = itens.filter((v) => v.id !== principal.id && v.status !== 'livre');
-  const lista = [principal, ...outros.filter((v) => extras.includes(v.id) && v.status === 'finalizado')];
-  const valor = Math.round(lista.reduce((a, v) => a + valorItem(v, preco, tabela), 0) * 100) / 100;
+  const outros = antecipado ? [] : itens.filter((v) => v.id !== principal.id && v.status !== 'livre');
+  const lista = antecipado
+    ? [principal]
+    : [principal, ...outros.filter((v) => extras.includes(v.id) && v.status === 'finalizado')];
+  const valor = antecipado
+    ? Math.round(antecipado.valor * 100) / 100
+    : Math.round(lista.reduce((a, v) => a + valorItem(v, preco, tabela), 0) * 100) / 100;
+  const pagoTotal = antecipado ? 0 : lista.reduce((a, v) => a + (Number(v.pago) || 0), 0);
 
   const alterna = (id) => setExtras((e) => (e.includes(id) ? e.filter((x) => x !== id) : [...e, id]));
   const juntarAgora = async (v) => {
@@ -58,7 +63,7 @@ export default function Cobranca({ principal, itens, preco, tabela, rotuloDe, on
     setCarregando(true);
     try {
       const nome = lista.map((v) => rotuloDe(v)).join(', ');
-      const r = await criarPix(valor, `Aluguel ${nome}`);
+      const r = await criarPix(valor, `${antecipado ? 'Aluguel antecipado' : 'Aluguel'} ${nome}`);
       if (!r.copiaECola || !r.qrBase64) throw new Error('O servidor não devolveu o QR Code do Pix.');
       setPix({ id: r.id, copiaECola: r.copiaECola, imagem: r.qrBase64 });
       setModo('pix');
@@ -97,7 +102,11 @@ export default function Cobranca({ principal, itens, preco, tabela, rotuloDe, on
           {lista.length === 1 ? (
             <>
               <Text style={s.modalTitulo}>{rotuloDe(principal)}</Text>
-              <Text style={s.modalTempo}>{fmtTempoTexto(Math.floor(principal.acumulado / 1000))}</Text>
+              <Text style={s.modalTempo}>
+                {antecipado
+                  ? `Pagamento antecipado · ${antecipado.descricao}`
+                  : fmtTempoTexto(Math.floor(principal.acumulado / 1000))}
+              </Text>
             </>
           ) : (
             <View style={{ marginBottom: 6 }}>
@@ -110,6 +119,11 @@ export default function Cobranca({ principal, itens, preco, tabela, rotuloDe, on
             </View>
           )}
           <Text style={[s.modalValor, modo === 'semcobranca' && { color: cor.suave, textDecorationLine: 'line-through' }]}>{brl(valor)}</Text>
+          {pagoTotal > 0 && (
+            <Text style={[est.dica, { textAlign: 'center', color: cor.verde, fontWeight: '700' }]}>
+              Já pago antecipado: {brl(pagoTotal)} (já descontado)
+            </Text>
+          )}
 
           {modo === 'escolha' && (
             <>
@@ -147,8 +161,10 @@ export default function Cobranca({ principal, itens, preco, tabela, rotuloDe, on
               <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.azul }]} onPress={gerarPix} disabled={carregando}>
                 {carregando ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoGrandeTxt}>Gerar Pix (QR Code)</Text>}
               </TouchableOpacity>
-              <TouchableOpacity onPress={onFechar}><Text style={s.link}>Cobrar depois</Text></TouchableOpacity>
-              <TouchableOpacity onPress={() => setModo('semcobranca')}><Text style={[s.link, { color: cor.vermelho }]}>Encerrar sem cobrança</Text></TouchableOpacity>
+              <TouchableOpacity onPress={onFechar}><Text style={s.link}>{antecipado ? 'Cancelar' : 'Cobrar depois'}</Text></TouchableOpacity>
+              {!antecipado && (
+                <TouchableOpacity onPress={() => setModo('semcobranca')}><Text style={[s.link, { color: cor.vermelho }]}>Encerrar sem cobrança</Text></TouchableOpacity>
+              )}
             </>
           )}
 

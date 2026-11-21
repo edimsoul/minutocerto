@@ -4,7 +4,7 @@ import { CHAVES } from '../armazenamento';
 import { decorrido } from '../util';
 import { executar, patchDoServidor, pendente } from '../grupo';
 
-const LIVRE = { status: 'livre', inicio: 0, acumulado: 0, limite: null };
+const LIVRE = { status: 'livre', inicio: 0, acumulado: 0, limite: null, pago: 0 };
 
 export function useBrinquedos() {
   const [itens, setItens, pronto] = usePersistente(CHAVES.brinquedos, []);
@@ -32,7 +32,7 @@ export function useBrinquedos() {
       ...vs,
       {
         id, categoria: d.categoria, tipo: d.tipo, cor: norm(d.cor), numero, codigo,
-        status: 'livre', inicio: 0, acumulado: 0,
+        status: 'livre', inicio: 0, acumulado: 0, pago: 0,
       },
     ]);
     return { ok: true, id };
@@ -82,7 +82,7 @@ export function useBrinquedos() {
       const limite = minutos || null;
       return agir(
         v, 'iniciar', { limite },
-        () => atualiza(v.id, { status: 'rodando', inicio: Date.now(), acumulado: 0, limite }),
+        () => atualiza(v.id, { status: 'rodando', inicio: Date.now(), acumulado: 0, limite, pago: 0 }),
         (p) => ({ ...p, limite }),
       );
     },
@@ -90,6 +90,11 @@ export function useBrinquedos() {
       agir(v, 'pausar', {}, () => atualiza(v.id, { status: 'pausado', acumulado: decorrido(v, Date.now()), inicio: 0 })),
     retomar: (v) => agir(v, 'retomar', {}, () => atualiza(v.id, { status: 'rodando', inicio: Date.now() })),
     adicionarTempo,
+    // Soma ao que o cliente já pagou antecipado (reais). Fica salvo no próprio item.
+    registrarPago: (id, valor) =>
+      setItens((vs) =>
+        vs.map((v) => (v.id === id ? { ...v, pago: Math.round(((Number(v.pago) || 0) + valor) * 100) / 100 } : v))
+      ),
     finalizar: (v, opcoes) => parar(v, 'encerrar', opcoes?.modoCobranca),
     finalizarOutro: (v) => parar(v, 'encerrar'),
     liberar: async (ids, hist) => {
@@ -115,7 +120,9 @@ export function useBrinquedos() {
           const i = srv.find((x) => x.item_id === `b:${v.id}`);
           if (!i || pendente(i.item_id) || (v.seq || 0) === i.seq) return v;
           mudou = true;
-          return { ...v, ...patchDoServidor(i), limite: i.dados?.limite || null };
+          const pt = patchDoServidor(i);
+          const liberado = pt.status === 'livre' || i.status === 'parado';
+          return { ...v, ...pt, limite: i.dados?.limite || null, pago: liberado ? 0 : (Number(v.pago) || 0) };
         });
         return mudou ? novo : vs;
       }),

@@ -3,11 +3,15 @@ import { CHAVES } from './armazenamento';
 import { arred2 } from './util';
 import { valorItem } from './valores';
 
-export function montarHistorico(lista, metodo, extra, { rotuloDe, preco, tabela, modo }) {
+// valorFixo: pagamento antecipado (o item continua rodando; registra só o valor pago agora).
+export function montarHistorico(lista, metodo, extra, { rotuloDe, preco, tabela, modo, valorFixo, sufixo }) {
+  const antecipado = valorFixo != null;
   const lancamentos = lista.map((v) => ({
-    numero: v.numero, tipo: v.tipo, rotulo: rotuloDe(v),
-    segundos: Math.floor(v.acumulado / 1000),
-    valor: metodo === 'Sem cobrança' ? 0 : valorItem(v, preco, tabela),
+    numero: v.numero, tipo: v.tipo,
+    rotulo: rotuloDe(v) + (antecipado ? (sufixo || ' · antecipado') : ''),
+    segundos: antecipado ? 0 : Math.floor(v.acumulado / 1000),
+    valor: metodo === 'Sem cobrança' ? 0 : antecipado ? valorFixo : valorItem(v, preco, tabela),
+    ...(!antecipado && Number(v.pago) > 0 ? { pagoAntes: v.pago } : {}),
   }));
   const total = arred2(lancamentos.reduce((a, i) => a + i.valor, 0));
   return {
@@ -18,7 +22,9 @@ export function montarHistorico(lista, metodo, extra, { rotuloDe, preco, tabela,
     rotulo: lancamentos.map((i) => i.rotulo).join(' + '),
     segundos: lancamentos.reduce((a, i) => a + i.segundos, 0),
     valor: total, precoMinuto: preco,
-    metodo, data: new Date().toISOString(), itens: lancamentos, ...extra,
+    metodo, data: new Date().toISOString(), itens: lancamentos,
+    ...(antecipado ? { antecipado: true } : {}),
+    ...extra,
   };
 }
 

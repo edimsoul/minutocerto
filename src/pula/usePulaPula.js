@@ -52,13 +52,14 @@ export function usePulaPula() {
 
   return {
     itens, pronto,
-    adicionar: (nome, pacote = null) => {
+    // idFixo (opcional): permite à tela saber o id do item criado (usado no pagamento antecipado).
+    adicionar: (nome, pacote = null, idFixo = null) => {
       const n = String(nome || '').trim() || `Pessoa ${ref.current.length + 1}`;
       const p = pacoteDe(pacote);
-      const id = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+      const id = idFixo || `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
       const novo = {
         id, numero: n, tipo: 'Pula-pula', modo: 'pula',
-        status: 'rodando', inicio: Date.now(), acumulado: 0, pacote: p,
+        status: 'rodando', inicio: Date.now(), acumulado: 0, pacote: p, pago: 0,
       };
       return executar({
         item: `p:${id}`, tipo: 'iniciar', base: 0, dados: { numero: n, pacote: p },
@@ -66,6 +67,11 @@ export function usePulaPula() {
         aplicar: (pt) => setItens((vs) => [...vs, { ...novo, ...pt }]),
       });
     },
+    // Soma ao que o cliente já pagou antecipado (reais). Fica salvo no próprio item.
+    registrarPago: (id, valor) =>
+      setItens((vs) =>
+        vs.map((v) => (v.id === id ? { ...v, pago: Math.round(((Number(v.pago) || 0) + valor) * 100) / 100 } : v))
+      ),
     alterarPacote: (v, pacote) => {
       atualiza(v.id, { pacote: pacoteDe(pacote) });
       if (!estaConectado()) return;

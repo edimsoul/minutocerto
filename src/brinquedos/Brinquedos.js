@@ -21,6 +21,8 @@ const LINHA_2 = [25, 30];
 
 const PAD_JANELA = { padding: 20, paddingBottom: 120 };
 
+const arred2 = (n) => Math.round(n * 100) / 100;
+
 function precisaEscolherCobranca(v) {
   return !!v.limite;
 }
@@ -68,6 +70,9 @@ function CartaoBrinquedo({ v, agora, preco, tabela, brinq, limiteMin, aoIniciar,
             </View>
           )}
           <Text style={[s.status, { color: COR_STATUS[v.status] }]}>{STATUS[v.status]}</Text>
+          {v.pago > 0 && (
+            <Text style={[e.restante, { color: cor.verde }]}>✔ Pago antecipado: {brl(v.pago)}</Text>
+          )}
           {temLimite && v.status !== 'finalizado' && (
             <Text style={[e.restante, { color: esgotado ? cor.vermelho : cor.tinta }]}>
               {esgotado
@@ -85,7 +90,9 @@ function CartaoBrinquedo({ v, agora, preco, tabela, brinq, limiteMin, aoIniciar,
         {v.status !== 'livre' && (
           <View style={{ alignItems: 'flex-end' }}>
             <Text style={s.relogio}>{fmtTempo(ms)}</Text>
-            <Text style={s.valorAoVivo}>{brl(valorACobrar(v, agora, preco, undefined, tabela))}</Text>
+            <Text style={s.valorAoVivo}>
+              {v.pago > 0 ? 'Falta ' : ''}{brl(valorACobrar(v, agora, preco, undefined, tabela))}
+            </Text>
           </View>
         )}
       </View>
@@ -125,6 +132,11 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
   const [outraTxt, setOutraTxt] = useState('');
   const [pendOutra, setPendOutra] = useState(null);
 
+  // Pagamento antecipado
+  const [antecip, setAntecip] = useState(false);
+  const [antecipMais, setAntecipMais] = useState(false);
+  const [antCobr, setAntCobr] = useState(null); // { id, valor, descricao }
+
   const { itens } = brinq;
   const preco = config.precoMinuto;
   const tabela = config.precosBrinquedo;
@@ -133,6 +145,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
   const cobrando = itens.find((v) => v.id === cobrancaId);
   const escolhendo = itens.find((v) => v.id === escolhaId);
   const adicionando = itens.find((v) => v.id === maisId);
+  const antItem = antCobr ? itens.find((v) => v.id === antCobr.id) : null;
   const achados = numero.trim() ? brinq.buscarPorNumero(numero) : [];
 
   const noLote = lote.map((id) => itens.find((v) => v.id === id)).filter(Boolean);
@@ -174,8 +187,8 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
 
   const limparLimites = (ids) => ids.forEach((id) => avisados.current.delete(id));
 
-  const aoIniciar = (v) => { setTempoSel(undefined); setEscolhaId(v.id); };
-  const fecharEscolha = () => { setEscolhaId(null); setTempoSel(undefined); };
+  const aoIniciar = (v) => { setTempoSel(undefined); setAntecip(false); setEscolhaId(v.id); };
+  const fecharEscolha = () => { setEscolhaId(null); setTempoSel(undefined); setAntecip(false); };
 
   const iniciarComTempo = (minutos) => {
     const v = escolhendo;
@@ -187,19 +200,38 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
 
   const confirmarTempo = () => {
     if (tempoSel === undefined) return;
-    iniciarComTempo(tempoSel || null);
+    if (antecip && tempoSel > 0) {
+      const v = escolhendo;
+      if (!v) return;
+      avisados.current.delete(v.id);
+      setEscolhaId(null);
+      brinq.iniciar(v, tempoSel);
+      setAntCobr({ id: v.id, valor: valorPacote(tempoSel, preco, tabela), descricao: `${tempoSel} min` });
+    } else {
+      iniciarComTempo(tempoSel || null);
+    }
     setTempoSel(undefined);
+    setAntecip(false);
   };
 
-  const aoMaisTempo = (v) => { setMaisSel(undefined); setMaisId(v.id); };
-  const fecharMais = () => { setMaisId(null); setMaisSel(undefined); };
+  const aoMaisTempo = (v) => { setMaisSel(undefined); setAntecipMais(false); setMaisId(v.id); };
+  const fecharMais = () => { setMaisId(null); setMaisSel(undefined); setAntecipMais(false); };
+
+  // Diferença a pagar ao ampliar o tempo: pacote do novo total menos o que já foi pago.
+  const novoTotalMais = adicionando && maisSel ? adicionando.limite + maisSel : 0;
+  const difMais = novoTotalMais
+    ? Math.max(0, arred2(valorPacote(novoTotalMais, preco, tabela) - (Number(adicionando.pago) || 0)))
+    : 0;
 
   const confirmarMais = () => {
     const v = adicionando;
     if (!v || !maisSel) return;
     avisados.current.delete(v.id);
+    const cobrarAgora = antecipMais && difMais > 0.005;
+    const desc = `+${maisSel} min (total ${novoTotalMais} min)`;
     brinq.adicionarTempo(v, maisSel);
     fecharMais();
+    if (cobrarAgora) setAntCobr({ id: v.id, valor: difMais, descricao: desc });
   };
 
   const aoLerQR = (texto) => {
@@ -279,6 +311,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
   };
 
   const encerrarLote = async () => {
+    const quitado = totalLote < 0.005; // nada a cobrar: já foi tudo pago antecipado
     const feitos = [];
     for (const v of noLote) {
       const modo = modoCobranca[v.id];
@@ -286,7 +319,9 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
     }
     setLote([]);
     setModoCobranca({});
-    if (feitos.length) setCobrancaId(feitos[0].id);
+    if (!feitos.length) return;
+    if (quitado) setPendOutra({ ids: feitos.map((v) => v.id), metodo: 'Pago antecipado' });
+    else setCobrancaId(feitos[0].id);
   };
 
   const fecharOutra = () => { setOutraAberta(false); setOutraTxt(''); };
@@ -406,7 +441,7 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
               <TouchableOpacity
                 activeOpacity={0.8}
                 style={[e.livre, tempoSel === 0 && e.livreSel]}
-                onPress={() => setTempoSel(0)}>
+                onPress={() => { setTempoSel(0); setAntecip(false); }}>
                 <View style={[e.livreIcone, tempoSel === 0 && { backgroundColor: cor.azul }]}>
                   <MaterialCommunityIcons
                     name="infinity" size={30} color={tempoSel === 0 ? '#ffffff' : cor.tinta}
@@ -419,6 +454,22 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
                 {tempoSel === 0 && <MaterialCommunityIcons name="check-circle" size={24} color={cor.azul} />}
               </TouchableOpacity>
 
+              {tempoSel > 0 && (
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  style={[e.livre, { minHeight: 56 }, antecip && e.livreSel]}
+                  onPress={() => setAntecip((a) => !a)}>
+                  <MaterialCommunityIcons
+                    name={antecip ? 'checkbox-marked' : 'checkbox-blank-outline'} size={26}
+                    color={antecip ? cor.azul : cor.suave}
+                  />
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={e.livreTitulo}>Pagar antecipado</Text>
+                    <Text style={e.livreSub}>Cobra {brl(valorPacote(tempoSel, preco, tabela))} agora</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity
                 style={[e.botaoSeguir, tempoSel === undefined && { opacity: 0.4 }]}
                 disabled={tempoSel === undefined}
@@ -426,7 +477,11 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
                 <Text style={e.botaoSeguirTxt}>
                   {tempoSel === undefined
                     ? 'Escolha o tempo'
-                    : tempoSel === 0 ? 'Iniciar · tempo livre' : `Iniciar · ${tempoSel} min`}
+                    : tempoSel === 0
+                    ? 'Iniciar · tempo livre'
+                    : antecip
+                    ? `Iniciar e cobrar · ${tempoSel} min`
+                    : `Iniciar · ${tempoSel} min`}
                 </Text>
               </TouchableOpacity>
 
@@ -450,6 +505,29 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
               <View style={e.linhaTempos}>{LINHA_1.map(quadradoMais)}</View>
               <View style={e.linhaTempos}>{LINHA_2.map(quadradoMais)}</View>
 
+              {!!maisSel && !!adicionando && (
+                <Text style={[s.sub2, { marginBottom: 10 }]}>
+                  Novo total: {brl(valorPacote(novoTotalMais, preco, tabela))}
+                  {Number(adicionando.pago) > 0 ? ` · já pago: ${brl(adicionando.pago)}` : ''}
+                </Text>
+              )}
+
+              {!!maisSel && difMais > 0.005 && (
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  style={[e.livre, { minHeight: 56 }, antecipMais && e.livreSel]}
+                  onPress={() => setAntecipMais((a) => !a)}>
+                  <MaterialCommunityIcons
+                    name={antecipMais ? 'checkbox-marked' : 'checkbox-blank-outline'} size={26}
+                    color={antecipMais ? cor.azul : cor.suave}
+                  />
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={e.livreTitulo}>Pagar antecipado</Text>
+                    <Text style={e.livreSub}>Cobra só a diferença: {brl(difMais)} agora</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity
                 style={[e.botaoSeguir, !maisSel && { opacity: 0.4 }]}
                 disabled={!maisSel}
@@ -457,7 +535,9 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
                 <Text style={e.botaoSeguirTxt}>
                   {!maisSel
                     ? 'Escolha o tempo'
-                    : `Adicionar + ${maisSel} min (total ${(adicionando ? adicionando.limite : 0) + maisSel} min)`}
+                    : antecipMais && difMais > 0.005
+                    ? `Adicionar + ${maisSel} min e cobrar ${brl(difMais)}`
+                    : `Adicionar + ${maisSel} min (total ${novoTotalMais} min)`}
                 </Text>
               </TouchableOpacity>
 
@@ -522,6 +602,9 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
                       <Text style={s.sub2}>
                         Tempo corrido: {fmtTempo(ms)}{v.limite ? ` (definido: ${v.limite} min)` : ' (tempo livre)'}
                       </Text>
+                      {v.pago > 0 && (
+                        <Text style={[e.restante, { color: cor.verde }]}>Já pago antecipado: {brl(v.pago)}</Text>
+                      )}
                       {v.limite && (
                         <Text style={[e.restante, { color: cor.suave }]}>
                           {modo === 'integral'
@@ -543,11 +626,15 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
 
               <View style={s.acoes}>
                 <Botao txt="Juntar com outro" c={cor.ambar} onPress={() => { leuQRRef.current = false; setLendoEnc(true); }} />
-                <Botao txt="Pix / Dinheiro" c={cor.vermelho} onPress={encerrarLote} />
+                {totalLote < 0.005
+                  ? <Botao txt="Encerrar (já pago)" c={cor.verde} onPress={encerrarLote} />
+                  : <Botao txt="Pix / Dinheiro" c={cor.vermelho} onPress={encerrarLote} />}
               </View>
-              <View style={s.acoes}>
-                <Botao txt="Outra forma" c={cor.azul} onPress={() => setOutraAberta(true)} />
-              </View>
+              {totalLote >= 0.005 && (
+                <View style={s.acoes}>
+                  <Botao txt="Outra forma" c={cor.azul} onPress={() => setOutraAberta(true)} />
+                </View>
+              )}
               <TouchableOpacity onPress={abrirDigitarEnc}>
                 <Text style={s.link}>Juntar digitando o número</Text>
               </TouchableOpacity>
@@ -633,6 +720,24 @@ export default function Brinquedos({ brinq, config, onPagamento }) {
             limparLimites(lista.map((v) => v.id));
             setCobrancaId(null);
             setModoCobranca({});
+          }}
+        />
+      )}
+
+      {antItem && (
+        <Cobranca
+          principal={antItem} itens={itens} preco={preco} tabela={tabela} token={config.token}
+          rotuloDe={rotuloBrinquedo}
+          antecipado={antCobr}
+          onFinalizarOutro={brinq.finalizarOutro}
+          onFechar={() => setAntCobr(null)}
+          onPago={(metodo, lista, extra) => {
+            const h = montarHistorico(lista, metodo, extra, {
+              rotuloDe: rotuloBrinquedo, preco, tabela, modo: 'veiculos', valorFixo: antCobr.valor,
+            });
+            onPagamento(h);
+            brinq.registrarPago(antItem.id, antCobr.valor);
+            setAntCobr(null);
           }}
         />
       )}
