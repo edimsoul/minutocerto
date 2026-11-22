@@ -144,7 +144,7 @@ module.exports = (db) => {
 
   // Desativada: ativar backup só com o e-mail (sem código) deixava qualquer um ocupar o e-mail de outra pessoa.
   router.post('/backup-livre', (req, res) =>
-    res.status(410).json({ ok: false, erro: 'Confirme seu e-mail com o código enviado para ativar o backup.' }));
+    res.status(410).json({ ok: false, erro: 'Confirme Seu e-mail com o código enviado para ativar o backup.' }));
 
   return router;
 };
