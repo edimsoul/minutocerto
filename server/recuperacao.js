@@ -74,7 +74,7 @@ module.exports = (db) => {
       if (!r.ok) {
         console.error('[recuperacao] /otp falhou:', r.status);
         if (r.status === 429) {
-          return res.status(429).json({ ok: false, erro: 'Limite de e-mails atingido. Tente novamente mais tarde.' });
+          return res.status(429).json({ ok: false, erro: 'Limite de e-mails atingido. novamente mais tarde.' });
         }
         return res.status(502).json({ ok: false, erro: 'Não foi possível enviar o e-mail agora. Tente novamente em instantes.' });
       }
