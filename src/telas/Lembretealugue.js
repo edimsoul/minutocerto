@@ -41,6 +41,25 @@ async function criarCanais() {
   });
 }
 
+// Remove da barra de notificações os avisos "Tempo acabou!" que JÁ DISPARARAM
+// de aluguéis que não estão mais na lista (foram encerrados).
+// (cancelScheduledNotificationAsync só cancela os agendados; os que já apareceram
+// precisam de dismissNotificationAsync.)
+async function limparAvisosEncerrados(itens) {
+  try {
+    const naLista = new Set(
+      (itens || []).filter((i) => i && i.id != null).map((i) => PREFIXO_FIM + i.id)
+    );
+    const apresentadas = await Notifications.getPresentedNotificationsAsync();
+    for (const n of apresentadas) {
+      const id = String(n?.request?.identifier || '');
+      if (id.startsWith(PREFIXO_FIM) && !naLista.has(id)) {
+        await Notifications.dismissNotificationAsync(id).catch(() => {});
+      }
+    }
+  } catch (err) {}
+}
+
 async function sincronizarAlarmes(itens) {
   const agora = Date.now();
   const rodando = (itens || []).filter((i) => i && i.id != null && Number(i.fim) > agora);
@@ -92,6 +111,9 @@ export function useLembreteAluguel(qtd, itens = []) {
 
     (async () => {
       try {
+        // sempre primeiro: tira da barra o aviso de quem já foi encerrado
+        await limparAvisosEncerrados(itens);
+
         if (qtd <= 0 && !(itens || []).length) {
           await Notifications.dismissNotificationAsync(ID);
           await sincronizarAlarmes([]);
