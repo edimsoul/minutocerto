@@ -35,6 +35,15 @@ function Corpo({ modo, escolhido, onFechar, onModo, onIr, onSair }) {
     setEtapa('opcoes');
   };
 
+  // O Menu é um Modal (fica por cima de tudo). Se só bloquear o app, o Modal continua
+  // aberto na frente da tela de login e parece que "não saiu". Por isso fecha o menu primeiro.
+  const sair = () => {
+    if (onFechar) onFechar();
+    if (onSair) onSair();
+    // Para também FECHAR o app no Android, descomente (iOS não permite fechar por código):
+    // import { BackHandler } from 'react-native'  e  BackHandler.exitApp();
+  };
+
   const itens = [
     {
       k: 'inicio',
@@ -110,7 +119,7 @@ function Corpo({ modo, escolhido, onFechar, onModo, onIr, onSair }) {
                 <Text style={e.cartaoDesc}>{it.d}</Text>
               </TouchableOpacity>
             ))}
-            <TouchableOpacity style={[e.cartao, { borderColor: cor.vermelho }]} onPress={onSair}>
+            <TouchableOpacity style={[e.cartao, { borderColor: cor.vermelho }]} onPress={sair}>
               <View style={[e.cartaoIcone, { backgroundColor: cor.vermelho + '22' }]}>
                 <MaterialCommunityIcons name="logout" size={30} color={cor.vermelho} />
               </View>

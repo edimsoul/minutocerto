@@ -7,7 +7,8 @@ import { SERVIDOR as BASE, APP_KEY } from './nuvem';
 
 const CHAVE_TOKEN = 'mc_token'; // já é apagada pelo apagarTudo()
 const UM_DIA = 24 * 3600 * 1000;
-const PROIBIDO = /senha|salt|hash|token|cred/i; // nunca vai para a nuvem nem volta dela
+
+const PROIBIDO = /^(senha|senhahash|senha_hash|senhasalt|senha_salt|salt|hash|token|credenciais?|password|passwordhash)$/i;
 
 const sha = (t) => Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, t);
 
@@ -27,7 +28,7 @@ async function chamar(metodo, caminho, corpo, token) {
     const r = await fetch(BASE + caminho, {
       method: metodo,
       signal: ctrl.signal,
-      headers: { 'Content-Type': 'application/json', 'x-app-key': APP_KEY, Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json', 'x-app-key': APP_KEY, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: corpo ? JSON.stringify(corpo) : undefined,
     });
     const j = await r.json().catch(() => ({}));
@@ -39,7 +40,7 @@ async function chamar(metodo, caminho, corpo, token) {
   }
 }
 
-// remove campos sensíveis em qualquer nível
+// remove campos sensíveis (nome exato) em qualquer nível
 function limparObj(v, prof = 0) {
   if (prof > 8) return null;
   if (Array.isArray(v)) return v.map((x) => limparObj(x, prof + 1));
@@ -111,6 +112,7 @@ export async function backupSeNecessario() {
     if (!(await temToken())) return { ok: true, pulou: 'sem_token' };
     const meta = await lerJSON(CHAVES.backupMeta, {});
     if (meta.sessaoExpirada) return { ok: true, pulou: 'sessao' };
+    if (meta.adiarAte && Date.now() < meta.adiarAte) return { ok: true, pulou: 'adiado' };
     if (meta.ultimoEnvio && Date.now() - meta.ultimoEnvio < UM_DIA) return { ok: true, pulou: 'recente' };
     return await fazerBackup();
   } catch (e) {
@@ -123,7 +125,7 @@ export async function baixarUltimo() {
   const token = await sec.get(CHAVE_TOKEN);
   if (!token) return { ok: false, erro: 'Sessão não encontrada. Confirme seu e-mail de novo.' };
   const r = await chamar('GET', '/backup/ultimo', null, token);
-  if (r.status === 404) return { ok: false, erro: 'Não há backup salvo para este e-mail.' };
+  if (r.status === 404) return { ok: false, semBackup: true, erro: 'Não há backup salvo para este e-mail.' };
   if (r.status === 401) return { ok: false, erro: 'Sessão expirada. Confirme seu e-mail de novo.' };
   if (!r.ok) return { ok: false, erro: r.erro || 'Não foi possível baixar o backup.' };
   if ((await sha(String(r.conteudo))) !== r.hash) return { ok: false, erro: 'O backup veio corrompido. Tente de novo.' };
@@ -176,6 +178,31 @@ export async function apagarContaBackup() {
   return { ok: r.ok, erro: r.erro };
 }
 
+// 1º passo da ativação: o servidor envia um código para o e-mail.
+// Usa sempre motivo "cadastro" (envia mesmo que o e-mail seja novo), serve para ativar e para recuperar.
+// Resposta pode trazer { jaEnviado: true, espera } se o código já foi enviado há menos de 1 minuto.
+export async function pedirCodigo(email) {
+  const r = await chamar('POST', '/recuperacao/codigo/pedir', { email, motivo: 'cadastro' }, null);
+  if (!r.ok) return { ok: false, erro: r.erro || 'Não foi possível enviar o código.', espera: r.espera };
+  return { ok: true, jaEnviado: !!r.jaEnviado, espera: r.espera };
+}
+
+// 2º passo: confere o código e guarda o token da sessão do backup.
+export async function confirmarCodigo(email, codigo) {
+  const r = await chamar('POST', '/recuperacao/codigo/confirmar', { email, codigo }, null);
+  if (!r.ok || !r.token) return { ok: false, erro: r.erro || 'Não foi possível confirmar o código.' };
+  await guardarToken(r.token);
+  return { ok: true };
+}
+
+// Depois de ativar num aparelho novo, evita que o envio automático sobrescreva o "último backup"
+// antes de a pessoa decidir se quer restaurar. Vale por 1 dia ou até o próximo envio manual.
+export async function adiarBackup() {
+  const meta = await lerJSON(CHAVES.backupMeta, {});
+  await salvarJSON(CHAVES.backupMeta, { ...meta, adiarAte: Date.now() + UM_DIA });
+}
+
+// (antigo) mantido só para não quebrar importações; o fluxo agora é pedirCodigo + confirmarCodigo
 export async function ativarBackupLivre() {
   return { ok: false, erro: 'Para ativar o backup, confirme seu e-mail com o código que enviamos.' };
 }

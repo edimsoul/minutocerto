@@ -6,10 +6,14 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const MOTIVOS = { cadastro: 'cadastro', recuperar: 'recuperar', senha: 'recuperar' };
 const SESSAO_DIAS = 90;
 const MAX_SESSOES = 10;
+const ESPERA_MS = 60 * 1000; // intervalo entre envios reais para o mesmo e-mail
 
 const sha256 = (txt) => crypto.createHash('sha256').update(txt).digest('hex');
 
 const baldes = new Map();
+// e-mail -> momento do último envio de código (o código anterior continua válido)
+const envios = new Map();
+
 function estourou(chave, max, janelaMs) {
   const agora = Date.now();
   const lista = (baldes.get(chave) || []).filter((t) => agora - t < janelaMs);
@@ -21,10 +25,23 @@ function estourou(chave, max, janelaMs) {
   baldes.set(chave, lista);
   return false;
 }
+
+function desfazer(chave) {
+  const lista = baldes.get(chave);
+  if (lista && lista.length) {
+    lista.pop();
+    if (!lista.length) baldes.delete(chave);
+  }
+}
+
 setInterval(() => {
-  const limite = Date.now() - 60 * 60 * 1000;
+  const agora = Date.now();
+  const limite = agora - 60 * 60 * 1000;
   for (const [k, v] of baldes) {
     if (!v.some((t) => t > limite)) baldes.delete(k);
+  }
+  for (const [k, t] of envios) {
+    if (agora - t > ESPERA_MS) envios.delete(k);
   }
 }, 10 * 60 * 1000).unref();
 
@@ -48,38 +65,69 @@ module.exports = (db) => {
   const router = express.Router();
 
   router.post('/codigo/pedir', async (req, res) => {
+    const usadas = [];
+    const limitar = (chave, max, janelaMs) => {
+      const bloqueado = estourou(chave, max, janelaMs);
+      if (!bloqueado) usadas.push(chave);
+      return bloqueado;
+    };
+    const devolverCotas = () => usadas.forEach(desfazer);
+    let email = '';
+
     try {
-      const email = String(req.body?.email || '').trim().toLowerCase();
+      email = String(req.body?.email || '').trim().toLowerCase();
       const motivo = MOTIVOS[req.body?.motivo];
       if (!EMAIL_RE.test(email) || email.length > 120) return res.status(400).json({ ok: false, erro: 'Digite um e-mail válido.' });
       if (!motivo) return res.status(400).json({ ok: false, erro: 'Pedido inválido.' });
 
-      if (estourou('env-global', 300, 3600 * 1000)) {
-        return res.status(429).json({ ok: false, erro: 'Serviço ocupado. Tente novamente mais tarde.' });
+      // Pedido repetido (ex.: digitou o e-mail duas vezes ou tocou duas vezes no botão):
+      // o código do primeiro envio ainda vale. Não é erro e não gasta cota:
+      // o app deve seguir para a tela de digitar o código.
+      const ultimo = envios.get(email);
+      if (ultimo && Date.now() - ultimo < ESPERA_MS) {
+        const espera = Math.ceil((ESPERA_MS - (Date.now() - ultimo)) / 1000);
+        return res.json({ ok: true, jaEnviado: true, espera });
       }
-      if (estourou(`env-min:${email}`, 1, 60 * 1000)) {
-        return res.status(429).json({ ok: false, erro: 'Aguarde 1 minuto para pedir outro código.' });
+
+      if (limitar('env-global', 300, 3600 * 1000)) {
+        devolverCotas();
+        return res.status(429).json({ ok: false, erro: 'Muitos pedidos no momento. Tente novamente em alguns minutos.' });
       }
-      if (estourou(`env-h:${email}`, 3, 3600 * 1000) || estourou(`env-ip:${req.ip}`, 10, 3600 * 1000)) {
+      if (limitar(`env-h:${email}`, 5, 3600 * 1000) || limitar(`env-ip:${req.ip}`, 20, 3600 * 1000)) {
+        devolverCotas();
         return res.status(429).json({ ok: false, erro: 'Muitas tentativas. Tente de novo mais tarde.' });
       }
+
+      // reserva o intervalo já aqui, para o segundo toque seguido não disparar outro envio
+      envios.set(email, Date.now());
 
       if (motivo === 'recuperar') {
         const ex = await db.from('emails_recuperacao').select('email').eq('email', email).maybeSingle();
         if (ex.error) throw new Error(ex.error.message);
-        if (!ex.data) return res.json({ ok: true }); // não revela se o e-mail existe
+        if (!ex.data) return res.json({ ok: true });
       }
 
       const r = await authSupabase('/otp', { email, create_user: true });
       if (!r.ok) {
-        console.error('[recuperacao] /otp falhou:', r.status);
+        devolverCotas();
+        envios.delete(email); // não enviou: libera para tentar de novo
+        console.error('[recuperacao] /otp falhou:', r.status, JSON.stringify(r.corpo));
         if (r.status === 429) {
-          return res.status(429).json({ ok: false, erro: 'Limite de e-mails atingido. novamente mais tarde.' });
+          const porEmail = r.corpo?.error_code === 'over_email_send_rate_limit';
+          return res.status(429).json({
+            ok: false,
+            espera: porEmail ? undefined : 60,
+            erro: porEmail
+              ? 'Limite de e-mails do sistema atingido. Tente novamente mais tarde.'
+              : 'Aguarde cerca de 1 minuto e tente novamente.',
+          });
         }
         return res.status(502).json({ ok: false, erro: 'Não foi possível enviar o e-mail agora. Tente novamente em instantes.' });
       }
       res.json({ ok: true });
     } catch (e) {
+      devolverCotas();
+      if (email) envios.delete(email);
       console.error('[recuperacao] pedir:', e.message);
       erroServidor(res);
     }
@@ -89,7 +137,6 @@ module.exports = (db) => {
     try {
       const email = String(req.body?.email || '').trim().toLowerCase();
       const codigo = String(req.body?.codigo || '').trim();
-      // 6 a 10 dígitos: acompanha o "Email OTP Length" configurado no Supabase
       if (!EMAIL_RE.test(email) || !/^\d{6,10}$/.test(codigo)) {
         return res.status(400).json({ ok: false, erro: 'Código inválido.' });
       }
@@ -100,15 +147,17 @@ module.exports = (db) => {
       let r = await authSupabase('/verify', { type: 'email', email, token: codigo });
       if (!r.ok && r.status !== 429) r = await authSupabase('/verify', { type: 'signup', email, token: codigo });
       if (!r.ok) {
+        console.error('[recuperacao] /verify falhou:', r.status, JSON.stringify(r.corpo));
         if (r.status === 429) return res.status(429).json({ ok: false, erro: 'Muitas tentativas. Aguarde um pouco.' });
-        return res.status(400).json({ ok: false, erro: 'Código incorreto ou expirado.' });
+        return res.status(400).json({ ok: false, erro: 'Código incorreto ou expirado. Use o código do e-mail mais recente.' });
       }
+
+      baldes.delete(`conf:${email}`);
 
       const brutoId = req.get('x-device-id') || null;
       const deviceId = brutoId && UUID_RE.test(brutoId) ? brutoId : null;
       const authUserId = r.corpo?.user?.id || null;
 
-      // Se alguém plantou backup neste e-mail antes dele ser verificado, descarta (versões antigas do servidor).
       const ex = await db.from('emails_recuperacao').select('verificado').eq('email', email).maybeSingle();
       if (ex.error) throw new Error(ex.error.message);
       if (ex.data && ex.data.verificado === false) {
@@ -121,7 +170,6 @@ module.exports = (db) => {
       const up = await db.from('emails_recuperacao').upsert(linha, { onConflict: 'email' });
       if (up.error) throw new Error(up.error.message);
 
-      // Nova sessão de backup. As sessões de outros aparelhos continuam valendo.
       const token = crypto.randomBytes(32).toString('hex');
       const ins = await db.from('sessoes_backup').insert({
         token_hash: sha256(token), email, device_id: deviceId,
@@ -142,9 +190,8 @@ module.exports = (db) => {
     }
   });
 
-  // Desativada: ativar backup só com o e-mail (sem código) deixava qualquer um ocupar o e-mail de outra pessoa.
   router.post('/backup-livre', (req, res) =>
-    res.status(410).json({ ok: false, erro: 'Confirme Seu e-mail com o código enviado para ativar o backup.' }));
+    res.status(410).json({ ok: false, erro: 'Confirme seu e-mail com o código enviado para ativar o backup.' }));
 
   return router;
 };

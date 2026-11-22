@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, AppState, Alert } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,7 +17,7 @@ import { backupSeNecessario, temToken, apagarContaBackup } from './src/backup';
 import { excluirMeusDados, planoMP, presenca } from './src/nuvem';
 import { lerEmailCadastrado } from './src/recuperacao';
 import { useGrupo, sairDoGrupo, estadoGrupo, sincronizarAgora } from './src/grupo';
-//import { useLembreteAluguel } from './src/telas/Lembretealugue';
+import { useLembreteAluguel } from './src/telas/Lembretealugue';
 
 import { useBrinquedos } from './src/brinquedos/useBrinquedos';
 import Brinquedos from './src/brinquedos/Brinquedos';
@@ -46,15 +46,34 @@ const TITULOS = {
   conectar: 'Conectar aparelho', feedback: 'Feedback', privacidade: 'Privacidade e dados', assinatura: 'Assinatura',
 };
 
-// NOVO: conta quantos aluguéis estão rodando agora.
-// ATENÇÃO: ajuste os nomes dos campos para os que seu useBrinquedos/usePulaPula realmente usam.
 const estaEmAndamento = (x) =>
-  !!x && !!(x.inicio || x.iniciadoEm || x.rodando || x.emAndamento || x.ativo) && !x.fim && !x.finalizado;
+  !!x && !!(x.status === 'rodando' || x.inicio || x.iniciadoEm || x.rodando || x.emAndamento || x.ativo) && !x.fim && !x.finalizado;
+
+const fimDoAluguel = (x) => {
+  const limite = Number(x.limite ?? x.tempoLimite ?? x.minutos ?? x.dados?.limite);
+  const inicio = Number(x.inicio ?? x.iniciadoEm);
+  if (!(limite > 0) || !(inicio > 0)) return null;
+  return inicio + limite * 60000 - (Number(x.acumulado) || 0);
+};
+
+const listaDe = (obj) => {
+  if (!obj) return [];
+  if (Array.isArray(obj)) return obj;
+  if (Array.isArray(obj.itens)) return obj.itens;
+  if (Array.isArray(obj.sessoes)) return obj.sessoes;
+  return [];
+};
 
 function contarAlugueis(brinq, pula) {
-  const listaBrinq = Array.isArray(brinq.itens) ? brinq.itens : [];
-  const listaPula = Array.isArray(pula.itens) ? pula.itens : (Array.isArray(pula.sessoes) ? pula.sessoes : []);
-  return listaBrinq.filter(estaEmAndamento).length + listaPula.filter(estaEmAndamento).length;
+  return listaDe(brinq).filter(estaEmAndamento).length + listaDe(pula).filter(estaEmAndamento).length;
+}
+
+function listarAlugueis(brinq, pula) {
+  const montar = (lista, pre) => lista
+    .filter((x) => estaEmAndamento(x) && x.status !== 'pausado')
+    .map((x) => ({ id: `${pre}-${x.id ?? x.item_id}`, nome: x.nome, fim: fimDoAluguel(x) }))
+    .filter((x) => x.fim);
+  return [...montar(listaDe(brinq), 'b'), ...montar(listaDe(pula), 'p')];
 }
 
 function Principal() {
@@ -76,9 +95,15 @@ function Principal() {
 
   const modo = config.modo || 'veiculos';
 
-  // NOVO: notificação fixa enquanto houver aluguel em andamento (0 = remove a notificação)
-  //const qtdAlugueis = logado ? contarAlugueis(brinq, pula) : 0;
-  //useLembreteAluguel(qtdAlugueis);
+  const qtdAlugueis = useMemo(
+    () => (logado ? contarAlugueis(brinq, pula) : 0),
+    [logado, brinq.itens, pula.itens, pula.sessoes],
+  );
+  const alugueis = useMemo(
+    () => (logado ? listarAlugueis(brinq, pula) : []),
+    [logado, brinq.itens, pula.itens, pula.sessoes],
+  );
+  useLembreteAluguel(qtdAlugueis, alugueis);
 
   useVoltarAndroid({
     logado, menu, tela,

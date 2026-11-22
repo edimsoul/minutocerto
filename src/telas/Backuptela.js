@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert, ScrollView, StyleSheet, AppState, BackHandler, Keyboard } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { temToken, lerStatus, fazerBackup, apagarBackupNuvem, ativarBackupLivre, baixarUltimo, restaurar } from '../backup';
+import {
+  temToken, lerStatus, fazerBackup, apagarBackupNuvem, baixarUltimo, restaurar,
+  pedirCodigo, confirmarCodigo, adiarBackup,
+} from '../backup';
 import { CHAVES, lerJSON } from '../armazenamento';
 import { s } from '../estilos';
 import { cor } from '../tema';
@@ -15,6 +18,9 @@ export default function BackupTela() {
   const [ativo, setAtivo] = useState(false);
   const [status, setStatus] = useState({});
   const [email, setEmail] = useState('');
+  const [codigo, setCodigo] = useState('');
+  const [etapa, setEtapa] = useState('email'); // 'email' -> 'codigo'
+  const [espera, setEspera] = useState(0); // segundos até poder reenviar o código
   const [carreg, setCarreg] = useState(false);
   const [msg, setMsg] = useState('');
   const [erro, setErro] = useState(false);
@@ -40,26 +46,91 @@ export default function BackupTela() {
     return () => sub.remove();
   }, [recarregar]);
 
-  const ativar = async () => {
+  // contagem regressiva do "Reenviar código"
+  useEffect(() => {
+    if (espera <= 0) return undefined;
+    const t = setTimeout(() => setEspera((n) => n - 1), 1000);
+    return () => clearTimeout(t);
+  }, [espera]);
+
+  // 1º passo: pede o código por e-mail
+  const pedir = async () => {
     if (carreg) return;
     Keyboard.dismiss();
     const em = email.trim().toLowerCase();
     if (!EMAIL.test(em)) return avisar('Digite um e-mail válido.', true);
     setCarreg(true);
-    avisar('Ativando, aguarde...');
+    avisar('Enviando o código, aguarde...');
     try {
-      const r = await ativarBackupLivre(em);
+      const r = await pedirCodigo(em);
       if (!r || !r.ok) {
-        avisar(r && r.erro, true);
+        if (r && r.espera) setEspera(r.espera);
+        return avisar(r && r.erro, true);
+      }
+      setEmail(em);
+      setCodigo('');
+      setEtapa('codigo');
+      setEspera(r.espera || 60);
+      avisar(
+        r.jaEnviado
+          ? 'O código já foi enviado. Confira seu e-mail (e a caixa de spam).'
+          : `Enviamos um código para ${em}. Confira também a caixa de spam.`
+      );
+    } catch (err) {
+      avisar((err && err.message) || ERRO_PADRAO, true);
+    } finally {
+      setCarreg(false);
+    }
+  };
+
+  // 2º passo: confirma o código, ativa e decide entre enviar backup ou oferecer restauração
+  const confirmar = async () => {
+    if (carreg) return;
+    Keyboard.dismiss();
+    const cod = codigo.replace(/\D/g, '');
+    if (cod.length < 6) return avisar('Digite o código recebido por e-mail.', true);
+    const estavaAtivo = ativo; // renovando uma sessão expirada
+    setCarreg(true);
+    avisar('Confirmando, aguarde...');
+    try {
+      const r = await confirmarCodigo(email, cod);
+      if (!r || !r.ok) return avisar(r && r.erro, true);
+
+      setCodigo('');
+      setEmail('');
+      setEtapa('email');
+      setEspera(0);
+
+      // Aparelho que já tinha backup ativo: só renova a sessão e envia
+      // Aparelho novo: se já existe backup na nuvem, NÃO envia por cima; oferece restaurar
+      let existente = null;
+      if (!estavaAtivo) {
+        try { existente = await baixarUltimo(); } catch (err) { existente = null; }
+      }
+
+      if (existente && existente.ok) {
+        await adiarBackup();
+        await recarregar();
+        avisar(
+          `E-mail confirmado. Encontramos um backup de ${dataBR(existente.criadoEm)}. ` +
+          'Toque em "Restaurar da nuvem" para trazer seus dados.'
+        );
         return;
       }
+
       let b = { ok: false };
-      try {
-        b = (await fazerBackup({ forcar: true })) || { ok: false };
-      } catch (err) {
-        b = { ok: false, erro: err && err.message };
+      if (estavaAtivo || (existente && existente.semBackup)) {
+        try {
+          b = (await fazerBackup({ forcar: true })) || { ok: false };
+        } catch (err) {
+          b = { ok: false, erro: err && err.message };
+        }
+      } else {
+        // não deu para verificar a nuvem agora: não envia nada por cima
+        await recarregar();
+        avisar('E-mail confirmado. Toque em "Restaurar da nuvem" para ver se há backup, ou em "Fazer backup agora".');
+        return;
       }
-      setEmail('');
       await recarregar();
       if (b.ok) {
         avisar(b.pulou === 'vazio' ? 'Backup ativado. Ele começa quando houver dados.' : 'Backup ativado e enviado.');
@@ -71,6 +142,13 @@ export default function BackupTela() {
     } finally {
       setCarreg(false);
     }
+  };
+
+  const outroEmail = () => {
+    setEtapa('email');
+    setCodigo('');
+    setEspera(0);
+    avisar('');
   };
 
   const fazerAgora = async () => {
@@ -188,24 +266,56 @@ export default function BackupTela() {
         </View>
 
         {precisaAtivar ? (
-          <>
-            <Text style={e.txt}>Digite seu e-mail para ativar o backup. Ele guarda seus dados na nuvem e é enviado sozinho uma vez por dia.</Text>
-            <TextInput
-              style={[s.input, { color: '#000000' }]}
-              placeholder="Seu e-mail"
-              placeholderTextColor="#6b7280"
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="email-address"
-              value={email}
-              onChangeText={setEmail}
-              onSubmitEditing={ativar}
-              returnKeyType="go"
-            />
-            <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.verde }, carreg && { opacity: 0.6 }]} onPress={ativar} disabled={carreg}>
-              {carreg ? <ActivityIndicator color={cor.branco} /> : <Text style={s.botaoGrandeTxt}>Ativar backup</Text>}
-            </TouchableOpacity>
-          </>
+          etapa === 'email' ? (
+            <>
+              <Text style={e.txt}>
+                Digite seu e-mail e enviaremos um código para confirmar. O backup guarda seus dados na nuvem e é enviado sozinho uma vez por dia.
+                {'\n\n'}
+                Já tinha backup? Use o mesmo e-mail para recuperar seus dados.
+              </Text>
+              <TextInput
+                style={[s.input, { color: '#000000' }]}
+                placeholder="Seu e-mail"
+                placeholderTextColor="#6b7280"
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="email-address"
+                value={email}
+                onChangeText={setEmail}
+                onSubmitEditing={pedir}
+                returnKeyType="go"
+              />
+              <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.verde }, carreg && { opacity: 0.6 }]} onPress={pedir} disabled={carreg}>
+                {carreg ? <ActivityIndicator color={cor.branco} /> : <Text style={s.botaoGrandeTxt}>Enviar código</Text>}
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <Text style={e.txt}>Digite o código que enviamos para {email}.</Text>
+              <TextInput
+                style={[s.input, { color: '#000000', letterSpacing: 4, fontSize: 20, textAlign: 'center' }]}
+                placeholder="Código"
+                placeholderTextColor="#6b7280"
+                keyboardType="number-pad"
+                textContentType="oneTimeCode"
+                autoComplete="sms-otp"
+                maxLength={10}
+                value={codigo}
+                onChangeText={setCodigo}
+                onSubmitEditing={confirmar}
+                returnKeyType="go"
+              />
+              <TouchableOpacity style={[s.botaoGrande, { backgroundColor: cor.verde }, carreg && { opacity: 0.6 }]} onPress={confirmar} disabled={carreg}>
+                {carreg ? <ActivityIndicator color={cor.branco} /> : <Text style={s.botaoGrandeTxt}>Confirmar código</Text>}
+              </TouchableOpacity>
+              <TouchableOpacity style={[e.link, (carreg || espera > 0) && { opacity: 0.5 }]} onPress={pedir} disabled={carreg || espera > 0}>
+                <Text style={e.linkTxt}>{espera > 0 ? `Reenviar código em ${espera}s` : 'Reenviar código'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={e.link} onPress={outroEmail} disabled={carreg}>
+                <Text style={e.linkTxt}>Usar outro e-mail</Text>
+              </TouchableOpacity>
+            </>
+          )
         ) : (
           <>
             <Text style={e.txt}>O app envia um backup sozinho uma vez por dia. Aqui você pode enviar agora ou restaurar o último backup da nuvem.</Text>
@@ -238,4 +348,6 @@ const e = StyleSheet.create({
   titulo: { fontSize: 17, fontWeight: '800', color: cor.tinta },
   desc: { fontSize: 12, color: cor.suave, marginTop: 2 },
   txt: { fontSize: 14, color: cor.suave, lineHeight: 20, marginBottom: 12 },
+  link: { alignItems: 'center', paddingVertical: 12 },
+  linkTxt: { color: cor.azul, fontWeight: '700', fontSize: 14 },
 });

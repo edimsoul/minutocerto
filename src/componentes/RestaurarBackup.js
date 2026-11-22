@@ -47,7 +47,7 @@ export default function RestaurarBackup({ visible, onClose, config, setConfig, o
 
   const confirmar = async () => {
     if (carreg) return;
-    if (codigo.trim().length !== 8) return setMsg('Digite o código de 8 dígitos.');
+    if (codigo.trim().length !== 6) return setMsg('Digite o código de 6 dígitos.');
     setCarreg(true); setMsg('');
     const r = await confirmarCodigo(normalizar(email), codigo.trim());
     if (!r.ok) { setCarreg(false); return setMsg(r.erro); }
@@ -123,7 +123,7 @@ export default function RestaurarBackup({ visible, onClose, config, setConfig, o
               <>
                 <TextInput
                   style={s.input}
-                  placeholder="Código de 8 dígitos"
+                  placeholder="Código de 6 dígitos"
                   placeholderTextColor={PH}
                   keyboardType="number-pad"
                   maxLength={8}
