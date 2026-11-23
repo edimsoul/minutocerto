@@ -17,7 +17,7 @@ import { backupSeNecessario, temToken, apagarContaBackup } from './src/backup';
 import { excluirMeusDados, planoMP, presenca } from './src/nuvem';
 import { lerEmailCadastrado } from './src/recuperacao';
 import { useGrupo, sairDoGrupo, estadoGrupo, sincronizarAgora } from './src/grupo';
-import { useLembreteAluguel } from './src/telas/Lembretealugue';
+import { useLembreteAluguel, carregarConfigAlarme, CONFIG_PADRAO as ALARME_PADRAO } from './src/telas/Lembretealugue';
 
 import { useBrinquedos } from './src/brinquedos/useBrinquedos';
 import Brinquedos from './src/brinquedos/Brinquedos';
@@ -28,7 +28,7 @@ import PulaPula from './src/pula/PulaPula';
 import Login from './src/telas/Login';
 import Menu from './src/telas/Menu';
 import Relatorio from './src/telas/Relatorio';
-import ValorMinuto from './src/telas/ValorMinuto';
+import Ajuste from './src/telas/Ajuste';
 import MercadoPago from './src/telas/MercadoPago';
 import CobrancaAvulsa from './src/Cobranca/CobrancaAvulsa';
 import Acesso from './src/telas/Acesso';
@@ -42,7 +42,7 @@ import RestaurarBackup from './src/componentes/RestaurarBackup';
 
 const TITULOS = {
   cadastro: 'Cadastro de brinquedos', relatorio: 'Relatório',
-  valor: 'Valor do minuto', mp: 'Mercado Pago', acesso: 'Usuário e senha', backup: 'Backup na nuvem',
+  valor: 'Ajuste', mp: 'Mercado Pago', acesso: 'Usuário e senha', backup: 'Backup na nuvem',
   conectar: 'Conectar aparelho', feedback: 'Feedback', privacidade: 'Privacidade e dados', assinatura: 'Assinatura',
 };
 
@@ -88,12 +88,17 @@ function Principal() {
   const avisouFimTeste = useRef(false);
 
   const [config, setConfig, configPronta] = useConfig();
+  const [configAlarme, setConfigAlarme] = useState(ALARME_PADRAO);
   const historico = useHistorico();
   const brinq = useBrinquedos();
   const pula = usePulaPula();
   const baixando = useAtualizacao(!logado);
 
   const modo = config.modo || 'veiculos';
+
+  useEffect(() => {
+    carregarConfigAlarme().then(setConfigAlarme);
+  }, []);
 
   const qtdAlugueis = useMemo(
     () => (logado ? contarAlugueis(brinq, pula) : 0),
@@ -103,7 +108,7 @@ function Principal() {
     () => (logado ? listarAlugueis(brinq, pula) : []),
     [logado, brinq.itens, pula.itens, pula.sessoes],
   );
-  useLembreteAluguel(qtdAlugueis, alugueis);
+  useLembreteAluguel(qtdAlugueis, alugueis, configAlarme);
 
   useVoltarAndroid({
     logado, menu, tela,
@@ -366,7 +371,12 @@ function Principal() {
         )}
         {tela === 'cadastro' && <CadastroBrinquedos brinq={brinq} />}
         {tela === 'relatorio' && <Relatorio historico={historico.lista} onLimpar={historico.limpar} />}
-        {tela === 'valor' && <ValorMinuto config={config} setConfig={setConfig} />}
+        {tela === 'valor' && (
+          <Ajuste
+            config={config} setConfig={setConfig}
+            configAlarme={configAlarme} setConfigAlarme={setConfigAlarme}
+          />
+        )}
         {tela === 'mp' && <MercadoPago config={config} setConfig={setConfig} />}
         {tela === 'acesso' && <Acesso config={config} setConfig={setConfig} />}
         {tela === 'backup' && <BackupTela />}

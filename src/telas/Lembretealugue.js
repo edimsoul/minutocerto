@@ -1,19 +1,63 @@
 import { useEffect } from 'react';
-import { Platform, Alert, AppState } from 'react-native';
+import { Platform, Alert, AppState, Vibration } from 'react-native';
 import * as Notifications from 'expo-notifications';
+import * as SecureStore from 'expo-secure-store';
 
 const ID = 'aluguel-em-andamento';
 const CANAL = 'alugueis';
-const CANAL_FIM = 'tempo-acabou-v2';
 const PREFIXO_FIM = 'fim-';
+const PREFIXO_TESTE = 'teste-';
+const PADRAO_VIBRACAO = [0, 500, 250, 500, 250, 500];
+
+// ---------- Configuração do alarme (modo + som) ----------
+export const SONS = {
+  bip1: { nome: 'Bip curto', arquivo: 'bip1.wav' },
+  bip2: { nome: 'Bip duplo agudo', arquivo: 'bip2.wav' },
+};
+
+// modo: 'som' (som + vibração) | 'vibrar' (só vibração)
+export const CONFIG_PADRAO = { modo: 'som', som: 'bip1' };
+
+const CHAVE_CONFIG = 'config_alarme';
+
+export async function carregarConfigAlarme() {
+  try {
+    const txt = await SecureStore.getItemAsync(CHAVE_CONFIG);
+    if (!txt) return CONFIG_PADRAO;
+    const c = JSON.parse(txt);
+    return {
+      modo: c.modo === 'vibrar' ? 'vibrar' : 'som',
+      som: SONS[c.som] ? c.som : 'bip1',
+    };
+  } catch (e) {
+    return CONFIG_PADRAO;
+  }
+}
+
+export async function salvarConfigAlarme(config) {
+  try {
+    await SecureStore.setItemAsync(CHAVE_CONFIG, JSON.stringify(config));
+  } catch (e) {}
+}
+
+// Um canal por opção: no Android o som do canal não pode ser alterado depois de criado.
+const CANAL_VIBRAR = 'tempo-acabou-vib-v1';
+const canalSom = (som) => `tempo-acabou-${som}-v1`;
+const canalDe = (config) =>
+  config.modo === 'vibrar' ? CANAL_VIBRAR : canalSom(config.som);
+
+// Config usada pelo handler (que roda fora do React)
+let configAtual = CONFIG_PADRAO;
+
+const ehAlarme = (id) => id.startsWith(PREFIXO_FIM) || id.startsWith(PREFIXO_TESTE);
 
 Notifications.setNotificationHandler({
   handleNotification: async (n) => {
-    const alarme = String(n?.request?.identifier || '').startsWith(PREFIXO_FIM);
+    const alarme = ehAlarme(String(n?.request?.identifier || ''));
     return {
       shouldShowBanner: alarme && AppState.currentState !== 'active',
       shouldShowList: true,
-      shouldPlaySound: alarme,
+      shouldPlaySound: alarme && configAtual.modo !== 'vibrar',
       shouldSetBadge: false,
     };
   },
@@ -24,27 +68,51 @@ const avisados = new Map();
 
 async function criarCanais() {
   if (Platform.OS !== 'android') return;
+
+  // limpa canais de versões antigas
+  for (const velho of ['tempo-acabou-v2', 'tempo-acabou-v3']) {
+    await Notifications.deleteNotificationChannelAsync(velho).catch(() => {});
+  }
+
   await Notifications.setNotificationChannelAsync(CANAL, {
     name: 'Aluguéis em andamento',
     importance: Notifications.AndroidImportance.LOW,
     vibrationPattern: [0],
     showBadge: false,
   });
-  await Notifications.setNotificationChannelAsync(CANAL_FIM, {
-    name: 'Tempo acabou',
+
+  const comum = {
     importance: Notifications.AndroidImportance.MAX,
-    sound: 'default',
     enableVibrate: true,
-    vibrationPattern: [0, 400, 200, 400],
+    vibrationPattern: PADRAO_VIBRACAO,
     lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    bypassDnd: true,
     showBadge: false,
+  };
+
+  // Só vibração
+  await Notifications.setNotificationChannelAsync(CANAL_VIBRAR, {
+    ...comum,
+    name: 'Tempo acabou (só vibração)',
+    sound: null,
   });
+
+  // Um canal por som
+  for (const [chave, s] of Object.entries(SONS)) {
+    await Notifications.setNotificationChannelAsync(canalSom(chave), {
+      ...comum,
+      name: `Tempo acabou (${s.nome})`,
+      sound: s.arquivo,
+      audioAttributes: {
+        usage: Notifications.AndroidAudioUsage.ALARM,
+        contentType: Notifications.AndroidAudioContentType.SONIFICATION,
+      },
+    });
+  }
 }
 
 // Remove da barra de notificações os avisos "Tempo acabou!" que JÁ DISPARARAM
 // de aluguéis que não estão mais na lista (foram encerrados).
-// (cancelScheduledNotificationAsync só cancela os agendados; os que já apareceram
-// precisam de dismissNotificationAsync.)
 async function limparAvisosEncerrados(itens) {
   try {
     const naLista = new Set(
@@ -60,10 +128,28 @@ async function limparAvisosEncerrados(itens) {
   } catch (err) {}
 }
 
-async function sincronizarAlarmes(itens) {
+function conteudoAlarme(titulo, corpo, config) {
+  const content = {
+    title: titulo,
+    body: corpo,
+    vibrate: PADRAO_VIBRACAO,
+    priority: Notifications.AndroidNotificationPriority.MAX,
+    interruptionLevel: 'timeSensitive', // iOS
+  };
+  if (config.modo !== 'vibrar') {
+    // iOS usa o arquivo do content; no Android quem manda é o canal
+    content.sound = Platform.OS === 'ios' ? SONS[config.som].arquivo : 'default';
+  } else {
+    content.sound = false;
+  }
+  return content;
+}
+
+async function sincronizarAlarmes(itens, config) {
   const agora = Date.now();
   const rodando = (itens || []).filter((i) => i && i.id != null && Number(i.fim) > agora);
   const ativos = new Set(rodando.map((i) => PREFIXO_FIM + i.id));
+  const canal = canalDe(config);
 
   const pendentes = await Notifications.getAllScheduledNotificationsAsync();
   for (const n of pendentes) {
@@ -79,44 +165,70 @@ async function sincronizarAlarmes(itens) {
 
   for (const i of rodando) {
     const fim = Math.round(Number(i.fim));
-    if (agendados.get(i.id) === fim && idsPendentes.has(PREFIXO_FIM + i.id)) continue;
+    const assinatura = `${fim}|${canal}|${config.modo}|${config.som}`;
+    if (agendados.get(i.id) === assinatura && idsPendentes.has(PREFIXO_FIM + i.id)) continue;
+
     await Notifications.cancelScheduledNotificationAsync(PREFIXO_FIM + i.id).catch(() => {});
     await Notifications.scheduleNotificationAsync({
       identifier: PREFIXO_FIM + i.id,
-      content: {
-        title: 'Tempo acabou!',
-        body: `O tempo de ${i.nome || 'um aluguel'} acabou.`,
-        sound: 'default',
-        priority: Notifications.AndroidNotificationPriority.MAX,
-      },
+      content: conteudoAlarme('Tempo acabou!', `O tempo de ${i.nome || 'um aluguel'} acabou.`, config),
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.DATE,
         date: new Date(fim),
-        ...(Platform.OS === 'android' ? { channelId: CANAL_FIM } : {}),
+        ...(Platform.OS === 'android' ? { channelId: canal } : {}),
       },
     });
-    agendados.set(i.id, fim);
+    agendados.set(i.id, assinatura);
+  }
+}
+
+// Botão "Testar": dispara o alarme em 8 segundos. Minimize o app para ouvir/sentir.
+export async function testarAlarme(config = CONFIG_PADRAO) {
+  try {
+    await criarCanais();
+    let perm = await Notifications.getPermissionsAsync();
+    if (!perm.granted && perm.canAskAgain) perm = await Notifications.requestPermissionsAsync();
+    if (!perm.granted) return false;
+
+    await Notifications.cancelScheduledNotificationAsync(PREFIXO_TESTE + '1').catch(() => {});
+    await Notifications.scheduleNotificationAsync({
+      identifier: PREFIXO_TESTE + '1',
+      content: conteudoAlarme('Teste de alarme', 'É assim que o aviso vai tocar.', config),
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+        seconds: 8,
+        ...(Platform.OS === 'android' ? { channelId: canalDe(config) } : {}),
+      },
+    });
+    return true;
+  } catch (err) {
+    console.log('ERRO TESTE ALARME:', err);
+    return false;
   }
 }
 
 function mostrarPopup(i) {
+  // Com o app aberto a notificação não aparece, então vibra aqui
+  Vibration.vibrate(PADRAO_VIBRACAO);
   Alert.alert('Tempo acabou!', `O tempo de ${i.nome || 'um aluguel'} acabou.`, [{ text: 'OK' }], { cancelable: false });
 }
 
-export function useLembreteAluguel(qtd, itens = []) {
-  const chave = JSON.stringify((itens || []).map((i) => [i.id, i.nome, i.fim]));
+export function useLembreteAluguel(qtd, itens = [], config = CONFIG_PADRAO) {
+  configAtual = config;
+  const chave =
+    JSON.stringify((itens || []).map((i) => [i.id, i.nome, i.fim])) +
+    `|${config.modo}|${config.som}`;
 
   useEffect(() => {
     let cancelado = false;
 
     (async () => {
       try {
-        // sempre primeiro: tira da barra o aviso de quem já foi encerrado
         await limparAvisosEncerrados(itens);
 
         if (qtd <= 0 && !(itens || []).length) {
           await Notifications.dismissNotificationAsync(ID);
-          await sincronizarAlarmes([]);
+          await sincronizarAlarmes([], config);
           return;
         }
 
@@ -127,7 +239,7 @@ export function useLembreteAluguel(qtd, itens = []) {
         if (!perm.granted && perm.canAskAgain) perm = await Notifications.requestPermissionsAsync();
         if (!perm.granted || cancelado) return;
 
-        await sincronizarAlarmes(itens);
+        await sincronizarAlarmes(itens, config);
         if (cancelado) return;
 
         if (qtd <= 0) {

@@ -26,7 +26,6 @@ function Corpo({ modo, escolhido, onFechar, onModo, onIr, onSair }) {
   const insets = useSafeAreaInsets();
   const topo = insets.top || (Platform.OS === 'android' ? RNStatusBar.currentHeight || 24 : 44);
 
-  // primeira vez: só a escolha do tipo; depois que já escolheu, abre direto nas opções
   const [etapa, setEtapa] = useState(escolhido ? 'opcoes' : 'tipo');
   const atual = PERFIS.find((p) => p[0] === modo) || PERFIS[0];
 
@@ -35,13 +34,9 @@ function Corpo({ modo, escolhido, onFechar, onModo, onIr, onSair }) {
     setEtapa('opcoes');
   };
 
-  // O Menu é um Modal (fica por cima de tudo). Se só bloquear o app, o Modal continua
-  // aberto na frente da tela de login e parece que "não saiu". Por isso fecha o menu primeiro.
   const sair = () => {
     if (onFechar) onFechar();
     if (onSair) onSair();
-    // Para também FECHAR o app no Android, descomente (iOS não permite fechar por código):
-    // import { BackHandler } from 'react-native'  e  BackHandler.exitApp();
   };
 
   const itens = [
@@ -56,7 +51,7 @@ function Corpo({ modo, escolhido, onFechar, onModo, onIr, onSair }) {
       ? [{ k: 'cadastro', n: 'Cadastro de brinquedos', d: 'Qr-Code e Código de barras', icone: 'qrcode-scan', c: cor.azul }]
       : []),
     { k: 'relatorio', n: 'Relatório', d: 'Ganhos e PDF', icone: 'chart-box-outline', c: cor.tinta },
-    { k: 'valor', n: 'Ajuste de Valores', d: 'Valores de Pacotes', icone: 'currency-brl', c: cor.ambar },
+    { k: 'valor', n: 'Ajuste', d: 'Valores, sons e vibração', icone: 'tune', c: cor.ambar },
     { k: 'mp', n: 'Mercado Pago', d: 'Pix e token', icone: 'qrcode', c: cor.azul },
     { k: 'acesso', n: 'Usuário e senha', d: 'Seu acesso', icone: 'account-lock', c: cor.tinta },
     { k: 'backup', n: 'Backup', d: 'Salvar na nuvem', icone: 'cloud-upload-outline', c: cor.azul },
