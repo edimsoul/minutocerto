@@ -72,7 +72,7 @@ let gravacoes = 0;
 const tempos = [];     // últimos tempos de resposta (ms)
 const historico = [];  // { t, carga, cpu, ram, db }
 
-const banco = { ok: null, ultimo: 0, erro: '', amostras: [] };
+const banco = { ok: null, ultimo: 0, erro: '', amostras: [], falhasSeguidas: 0, aquecido: false };
 
 function percentil(arr, p) {
   if (!arr.length) return 0;
@@ -158,15 +158,21 @@ async function sondarBanco() {
     if (r && r.error) throw new Error(r.error.message);
     banco.ok = true;
     banco.erro = '';
+    banco.falhasSeguidas = 0;
   } catch (e) {
     banco.ok = false;
     banco.erro = String((e && e.message) || e).slice(0, 120);
+    banco.falhasSeguidas += 1;
   } finally {
     clearTimeout(temporizador);
   }
   banco.ultimo = Date.now() - t0;
-  banco.amostras.push(banco.ultimo);
-  if (banco.amostras.length > 20) banco.amostras.shift();
+  // o 1º teste depois de ligar inclui DNS/TLS e conexão fria: não entra nas estatísticas
+  if (banco.aquecido) {
+    banco.amostras.push(banco.ultimo);
+    if (banco.amostras.length > 20) banco.amostras.shift();
+  }
+  banco.aquecido = true;
 }
 
 function ramAtual() {
@@ -210,9 +216,10 @@ function avaliar(m) {
   else if (m.cpu.pct >= 70) sobe('atencao', `CPU alta (${f(m.cpu.pct)}%).`);
   if (m.ram.pct >= 92) sobe('critico', `Memória quase cheia (${f(m.ram.pct)}%).`);
   else if (m.ram.pct >= 80) sobe('atencao', `Memória alta (${f(m.ram.pct)}%).`);
-  if (m.banco.ok === false) sobe('critico', 'O banco de dados não respondeu ao teste.');
-  else if (m.banco.p95 >= 2000) sobe('critico', `Banco muito lento (${m.banco.p95} ms).`);
-  else if (m.banco.p95 >= 800) sobe('atencao', `Banco lento (${m.banco.p95} ms).`);
+  if (m.banco.falhasSeguidas >= 2) sobe('critico', 'O banco de dados não respondeu a 2 testes seguidos.');
+  else if (m.banco.falhasSeguidas === 1) sobe('atencao', 'O último teste do banco de dados falhou.');
+  else if (m.banco.mediana >= 3000) sobe('critico', `Banco muito lento (mediana de ${m.banco.mediana} ms).`);
+  else if (m.banco.mediana >= 1000) sobe('atencao', `Banco lento (mediana de ${m.banco.mediana} ms).`);
   if (m.loop.p99Ms >= 500) sobe('critico', `Servidor travando (atraso de ${m.loop.p99Ms} ms).`);
   else if (m.loop.p99Ms >= 200) sobe('atencao', `Servidor com atraso (${m.loop.p99Ms} ms).`);
   if (m.rede.erros5xx >= 5) sobe('atencao', `${m.rede.erros5xx} erros do servidor no último minuto.`);
@@ -249,7 +256,10 @@ function snapshot() {
       ok: banco.ok,
       erro: banco.erro,
       ultimoMs: banco.ultimo,
+      falhasSeguidas: banco.falhasSeguidas,
       p95: Math.round(percentil(banco.amostras, 95)),
+      mediana: Math.round(percentil(banco.amostras.slice(-5), 50)),
+      maximo: Math.round(banco.amostras.length ? Math.max(...banco.amostras) : 0),
       gravacoes,
       fila: emAndamento,
     },

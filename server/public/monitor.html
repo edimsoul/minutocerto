@@ -552,7 +552,7 @@ let tickSis = 0;
 
 const COR_OK = '#2f9e5b', COR_ATENCAO = '#c98a12', COR_CRITICO = '#c0392b';
 const NIVEIS = { ok: ['SISTEMA OK', COR_OK, '✔', ''], atencao: ['ATENÇÃO', COR_ATENCAO, '!', 'atencao'], critico: ['CRÍTICO', COR_CRITICO, '✖', 'critico'] };
-const METRICAS = [['carga', 'Carga de pedidos'], ['cpu', 'CPU'], ['ram', 'Memória RAM'], ['banco', 'Banco (latência p95)'], ['ips', 'IPs ativos (1 min)'], ['resp', 'Tempo de resposta (p95)']];
+const METRICAS = [['carga', 'Carga de pedidos'], ['cpu', 'CPU'], ['ram', 'Memória RAM'], ['banco', 'Banco de dados (latência)'], ['ips', 'IPs ativos (1 min)'], ['resp', 'Tempo de resposta (p95)']];
 const SERIES = { carga: ['Carga de pedidos (%)', '#d97706'], cpu: ['CPU (%)', '#2563eb'], ram: ['Memória (%)', '#7c3aed'] };
 
 const corPct = (v, aten, crit) => (v >= crit ? COR_CRITICO : v >= aten ? COR_ATENCAO : COR_OK);
@@ -654,9 +654,10 @@ function renderSistema(erro) {
   metrica('carga', fmtPct(c.pct), c.pct, corPct(c.pct, 60, 90), `${c.reqMin} pedidos no último minuto · capacidade ${c.capacidade}/min`);
   metrica('cpu', fmtPct(cp.pct), cp.pct, corPct(cp.pct, 70, 90), `${String(cp.nucleos).replace('.', ',')} núcleo(s) disponíveis`);
   metrica('ram', r.usadoMb.toString().replace('.', ',') + ' MB', r.pct, corPct(r.pct, 80, 92), `${fmtPct(r.pct)} de ${r.limiteMb} MB`);
-  const corBanco = b.ok === false ? COR_CRITICO : b.p95 >= 2000 ? COR_CRITICO : b.p95 >= 800 ? COR_ATENCAO : COR_OK;
-  metrica('banco', b.ok === false ? 'Sem resposta' : b.p95 + ' ms', Math.min(100, (b.p95 / 2000) * 100), corBanco,
-    `${b.gravacoes} gravações · ${b.fila} em andamento agora`);
+  const semBanco = b.falhasSeguidas >= 2;
+  const corBanco = semBanco ? COR_CRITICO : b.falhasSeguidas === 1 ? COR_ATENCAO : b.mediana >= 3000 ? COR_CRITICO : b.mediana >= 1000 ? COR_ATENCAO : COR_OK;
+  metrica('banco', semBanco ? 'Sem resposta' : (b.mediana || b.ultimoMs) + ' ms', Math.min(100, ((b.mediana || b.ultimoMs) / 3000) * 100), corBanco,
+    `último teste ${b.ultimoMs} ms · pior dos últimos 5 min ${b.maximo} ms · ${b.gravacoes} gravações · ${b.fila} em andamento`);
   metrica('ips', String(n.ips), Math.min(100, n.ips), COR_OK, `${n.aparelhos} aparelhos ativos no último minuto`);
   const corResp = n.respP95Ms >= 2000 ? COR_CRITICO : n.respP95Ms >= 800 ? COR_ATENCAO : COR_OK;
   metrica('resp', n.respP95Ms + ' ms', Math.min(100, (n.respP95Ms / 2000) * 100), corResp,
@@ -671,7 +672,7 @@ function renderSistema(erro) {
   desenharGrafico();
 
   const textoCard = !sis.coletando ? 'Desligado' : sis.status.nivel === 'ok' ? 'OK' : sis.status.nivel === 'atencao' ? 'Atenção' : 'Crítico';
-  card('sistema', textoCard, `CPU ${fmtPct(cp.pct)} · RAM ${fmtPct(r.pct)} · Banco ${b.p95} ms`);
+  card('sistema', textoCard, `CPU ${fmtPct(cp.pct)} · RAM ${fmtPct(r.pct)} · Banco ${b.mediana || b.ultimoMs} ms`);
   cardEl.style.setProperty('--c', sis.coletando ? cor : '#6b7280');
   $('c-sistema').style.color = sis.coletando ? cor : '#6b7280';
 }
