@@ -1,4 +1,4 @@
-// Painel administrativo (/monitor e /api/monitor/*).
+
 const express = require('express');
 const path = require('path');
 const db = require('../db');
@@ -20,7 +20,7 @@ const contar = async (consulta) => {
 const somar = (arr, campo) => arr.reduce((s, x) => s + (Number(x[campo]) || 0), 0);
 const limiteConsulta = (req) => Math.min(Math.max(parseInt(req.query.limite, 10) || 50, 1), 500);
 
-// início do dia/semana/mês no horário de Brasília (UTC-3)
+
 function inicioDoPeriodo(p) {
   if (p === 'tudo') return new Date(0).toISOString();
   const b = new Date(Date.now() - 3 * 3600e3);
@@ -157,7 +157,6 @@ router.get(`${API}/aparelhos`, ...protegido, rota(async (req, res) => {
   }));
 }));
 
-// detalhe de um aparelho (aqui sim vem o JSON completo)
 router.get(`${API}/aparelhos/:id`, ...protegido, rota(async (req, res) => {
   if (!idValido(req.params.id)) throw falha(400, 'device_id inválido.');
   const s = exige(await db.from('sincronizacoes').select('dados, versao, atualizado_em')
