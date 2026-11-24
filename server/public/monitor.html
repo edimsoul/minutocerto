@@ -34,6 +34,7 @@
   button.mini { padding:4px 8px; font-size:12px; border-radius:4px; color:#fff; }
   button.mini.verde { background:var(--verde); }
   button.mini.vermelho { background:var(--vermelho); }
+  button.mini.cinza { background:var(--azul); }
 
   main { padding:0; }
   #aviso { display:none; background:var(--alerta); color:var(--amarelo); border-radius:8px; padding:8px 12px; font-size:13px; margin-bottom:12px; }
@@ -81,6 +82,23 @@
   #entrada form { background:var(--card); border:1px solid var(--linha); border-radius:14px; padding:24px; width:100%; max-width:340px; display:grid; gap:12px; }
   input { font:inherit; font-size:16px; padding:11px 12px; border-radius:8px; border:1px solid var(--linha); background:var(--card); color:var(--tinta); }
   #erro { color:var(--vermelho); font-size:13px; min-height:16px; white-space:pre-line; line-height:1.5; }
+
+  dialog { border:1px solid var(--linha); border-radius:14px; padding:20px; width:min(94vw, 460px); max-height:90vh; overflow:auto; background:var(--card); color:var(--tinta); }
+  dialog::backdrop { background:rgba(0,0,0,.4); }
+  .dlg { display:grid; gap:12px; }
+  .dlg h2 { margin:0; }
+  .dlg .info { display:grid; gap:4px; font-size:13px; }
+  .dlg .info div { display:flex; justify-content:space-between; gap:12px; }
+  .dlg .info span:first-child { color:var(--suave); }
+  .dlg .info span:last-child { text-align:right; }
+  .dlg label { display:grid; gap:4px; font-size:13px; color:var(--suave); }
+  .dlg .campos { display:grid; grid-template-columns:110px 1fr; gap:8px; }
+  .dlg .grade { display:flex; gap:6px; flex-wrap:wrap; }
+  .dlg .grade button { padding:8px 10px; }
+  .dlg .hist { max-height:170px; overflow:auto; font-size:12px; border:1px solid var(--linha); border-radius:8px; padding:6px 10px; }
+  .dlg .hist div { padding:4px 0; border-bottom:1px solid var(--linha); }
+  .dlg .hist div:last-child { border-bottom:none; }
+  .dlg .fim { display:flex; justify-content:flex-end; }
 
   .banner { display:flex; align-items:flex-start; gap:12px; border-radius:12px; padding:16px 18px; color:#fff; margin:8px 0 16px; background:#2f9e5b; }
   .banner.atencao { background:#c98a12; } .banner.critico { background:#c0392b; } .banner.sem { background:#6b7280; }
@@ -158,9 +176,9 @@
   <div id="secoes"></div>
 </main>
 
+<dialog id="dlg"></dialog>
+
 <script>
-// >>> COLE AQUI a sua linha original "const LOGO_SRC = 'data:image/png;base64,...';" <<<
-// Enquanto estiver vazia, o painel mostra o texto "MinutoCerto · Monitor" no lugar da logo.
 const LOGO_SRC = '';
 
 const chave = 'mc_admin_token';
@@ -168,11 +186,12 @@ let token = sessionStorage.getItem(chave) || '';
 let timer = null;
 let viewAtual = null;
 let dados = { resumo: null, acessos: [], pagamentos: [], aparelhos: [] };
-const filtro = { aparelhos: 'hoje', total: 'hoje', pendentes: 'todos' };
+const filtro = { aparelhos: 'hoje', total: 'hoje', pendentes: 'todos', clientes: 'todos' };
 
 const $ = (id) => document.getElementById(id);
 const brl = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const quando = (iso) => iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'medium' }) : '—';
+const dataCurta = (iso) => iso ? new Date(iso).toLocaleDateString('pt-BR') : '—';
 const num = (v) => Number(v) || 0;
 
 const EVENTOS = { abriu_app: ['Abriu o app', ''], login: ['Login', 'ok'], logout: ['Saiu', ''], falha_login: ['Senha errada', 'ruim'], reset_senha: ['Reset de senha', 'meio'], aceite_termos: ['Aceitou os termos', ''] };
@@ -186,9 +205,14 @@ const GRUPOS = {
   cancelados: ['cancelled', 'cancelado', 'rejected', 'expired'],
   estornados: ['refunded', 'charged_back'],
 };
+const ACOES_HIST = {
+  bloquear: 'Bloqueou', desbloquear: 'Desbloqueou', dar_teste: 'Deu dias de teste', dar_pago: 'Deu dias pagos',
+  encerrar_teste: 'Encerrou o teste', encerrar_pago: 'Encerrou o pagamento', liberar_total: 'Liberou sem limite', remover_liberacao: 'Removeu a liberação',
+};
 
 const CARDS = [
   ['sistema', 'Sistema', '#2f9e5b'],
+  ['clientes', 'Clientes e planos', '#5b6b8a'],
   ['acessos', 'Acessos hoje', '#64748b'],
   ['aparelhos', 'Aparelhos conectados', '#5b8a8a'],
   ['aprovados', 'Pagamentos aprovados hoje', '#4f8a6b'],
@@ -200,6 +224,7 @@ const CARDS = [
 ];
 const SECOES = [
   ['sistema', 'Monitor do sistema', 'Servidor ao vivo: carga, CPU, memória, banco de dados e IPs.', [['tb-sis-ips', 'Pedidos por IP (último minuto)']]],
+  ['clientes', 'Clientes e planos', 'Quem está em teste ou pagando, dias restantes, bloqueio e motivo. Toque em Gerenciar para agir.', [['tb-clientes', '']]],
   ['acessos', 'Acessos de hoje', 'Aparelho, usuário, IP e tudo o que o app enviou em cada acesso.', [['tb-acessos', '']]],
   ['aparelhos', 'Aparelhos conectados', 'Aparelhos que sincronizaram, com dados do cliente, plano e bloqueio.', [['tb-aparelhos', '']]],
   ['aprovados', 'Pagamentos aprovados hoje', 'Quantidade, valores e o que foi vendido em cada pagamento.', [['tb-aprovados-grupo', 'Por brinquedo / descrição'], ['tb-aprovados', 'Pagamentos']]],
@@ -348,10 +373,10 @@ const ordenar = (arr) => [...arr].sort((a, b) => new Date(b.criado_em) - new Dat
 const itemNome = (p) => p.brinquedo || p.item || p.titulo || p.nome || p.descricao || 'Sem descrição';
 const aprovadosEm = (p) => dados.pagamentos.filter((x) => x.status === 'approved' && noPeriodo(x.criado_em, p));
 const acessosDoDia = () => dados.acessos.filter((a) => noPeriodo(a.criado_em, 'hoje'));
-const ultimoAcessoDe = (device) => dados.acessos.find((a) => a.device_id === device);
 
 const K_ACESSO = ['criado_em', 'evento', 'usuario', 'device_id', 'versao', 'ip'];
 const K_PAG = ['criado_em', 'valor', 'metodo', 'status', 'device_id', 'descricao', 'brinquedo', 'item', 'titulo', 'nome'];
+const K_APARELHO = ['device_id', 'versao', 'atualizado_em', 'usuario', 'email', 'telefone', 'bloqueado', 'teste_vencido', 'dias_restantes', 'online', 'ultimo_uso', 'fase', 'vence_em', 'liberado', 'motivo_bloqueio', 'bloqueado_em', 'criado_em', 'teste_fim', 'pago_ate', 'dias_teste', 'dias_pago'];
 
 function renderAcessos() {
   const r = dados.resumo || {};
@@ -413,16 +438,21 @@ function renderAparelhos() {
         btn.className = 'mini ' + (a.bloqueado ? 'verde' : 'vermelho');
         btn.textContent = a.bloqueado ? 'Liberar' : 'Bloquear';
         btn.addEventListener('click', async () => {
-          const acao = a.bloqueado ? 'liberar' : 'bloquear';
-          if (!confirm(`Tem certeza que deseja ${acao} o aparelho de ${a.usuario || a.device_id}?`)) return;
+          const nome = a.usuario || a.device_id;
+          let motivo = '';
+          if (!a.bloqueado) {
+            const m = prompt(`Motivo do bloqueio de ${nome}:`);
+            if (m === null) return;
+            motivo = m.trim();
+            if (!motivo) return alert('Informe o motivo do bloqueio.');
+          } else if (!confirm(`Tem certeza que deseja liberar o aparelho de ${nome}?`)) return;
           btn.disabled = true;
           try {
-            const res = await fetch('/api/monitor/bloquear', {
+            await api('/api/monitor/bloquear', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
-              body: JSON.stringify({ device_id: a.device_id, bloquear: !a.bloqueado }),
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ device_id: a.device_id, bloquear: !a.bloqueado, motivo }),
             });
-            if (!res.ok) throw new Error('Erro ' + res.status);
             await atualizar();
           } catch (e) {
             btn.disabled = false;
@@ -431,7 +461,222 @@ function renderAparelhos() {
         });
         return btn;
     } },
-    { t: 'Detalhes', c: 'desc', f: (a) => extras(a, ['device_id', 'versao', 'atualizado_em', 'usuario', 'email', 'telefone', 'bloqueado', 'teste_vencido', 'dias_restantes', 'online', 'ultimo_uso', 'fase', 'vence_em']) },
+    { t: 'Detalhes', c: 'desc', f: (a) => extras(a, K_APARELHO) },
+  ], lista);
+}
+
+const nomeCliente = (a) => (a.usuario && a.usuario !== 'Sem nome' ? a.usuario : '') || (a.email && a.email !== 'Sem email' ? a.email : '') || a.device_id;
+const contatoCliente = (a) => [a.email, a.telefone].filter((x) => x && !/^Sem /.test(x)).join(' · ');
+
+function diasTexto(d) {
+  if (d === null || d === undefined) return '—';
+  if (d < 0) return `venceu há ${-d} ${-d === 1 ? 'dia' : 'dias'}`;
+  if (d === 0) return 'vence hoje';
+  return `${d} ${d === 1 ? 'dia' : 'dias'}`;
+}
+function classeDias(d) {
+  if (d === null || d === undefined) return '';
+  return d < 0 ? 'ruim' : d <= 3 ? 'meio' : 'ok';
+}
+function celulaDias(d, data) {
+  const box = document.createElement('div');
+  const t = document.createElement('div');
+  t.className = classeDias(d);
+  t.textContent = diasTexto(d);
+  box.appendChild(t);
+  if (data) {
+    const s = document.createElement('div');
+    s.className = 'k';
+    s.textContent = 'até ' + dataCurta(data);
+    box.appendChild(s);
+  }
+  return box;
+}
+function statusCliente(a) {
+  if (a.bloqueado) return ['Bloqueado', 'ruim'];
+  if (a.teste_vencido) return [a.fase === 'assinatura' ? 'Mensalidade vencida' : 'Teste vencido', 'ruim'];
+  if (a.liberado) return ['Liberado', 'ok'];
+  return ['Ativo', 'ok'];
+}
+function motivoCliente(a) {
+  if (a.bloqueado) return a.motivo_bloqueio || 'Sem motivo registrado';
+  if (a.teste_vencido) return a.fase === 'assinatura' ? 'Mensalidade vencida (bloqueio automático)' : 'Teste vencido (bloqueio automático)';
+  return '—';
+}
+function faseCliente(a) {
+  if (a.liberado) return ['Liberado', 'ok'];
+  if (a.fase === 'assinatura') return ['Pagando', 'ok'];
+  return ['Teste', 'meio'];
+}
+
+function fecharDialogo() { $('dlg').close(); }
+
+function linhaInfo(l, v) {
+  const d = document.createElement('div');
+  const a = document.createElement('span'); a.textContent = l;
+  const b = document.createElement('span');
+  if (v instanceof Node) b.appendChild(v); else b.textContent = v || '—';
+  d.append(a, b);
+  return d;
+}
+
+async function executarAcao(a, acao) {
+  const dias = parseInt($('dlg-dias').value, 10) || 0;
+  const motivo = $('dlg-motivo').value.trim();
+  const nome = nomeCliente(a);
+  if ((acao === 'dar_teste' || acao === 'dar_pago') && !(dias > 0)) return alert('Informe a quantidade de dias (maior que zero).');
+  if (acao === 'bloquear' && !motivo) return alert('Informe o motivo do bloqueio.');
+  const textos = {
+    bloquear: `Bloquear ${nome}?`,
+    desbloquear: `Desbloquear ${nome}?`,
+    dar_teste: `Dar ${dias} dia(s) de TESTE para ${nome}?`,
+    dar_pago: `Dar ${dias} dia(s) de PAGAMENTO para ${nome}?`,
+    encerrar_teste: `Encerrar o teste de ${nome} agora?`,
+    encerrar_pago: `Encerrar o pagamento de ${nome} agora?`,
+    liberar_total: `Liberar ${nome} sem limite de tempo?`,
+    remover_liberacao: `Remover a liberação sem limite de ${nome}?`,
+  };
+  if (!confirm(textos[acao])) return;
+  document.querySelectorAll('#dlg button').forEach((b) => { b.disabled = true; });
+  try {
+    await api('/api/monitor/cliente/acao', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_id: a.device_id, acao, dias, motivo }),
+    });
+    await atualizar();
+    const novo = dados.aparelhos.find((x) => x.device_id === a.device_id);
+    if (novo) abrirCliente(novo); else fecharDialogo();
+  } catch (e) {
+    document.querySelectorAll('#dlg button').forEach((b) => { b.disabled = false; });
+    alert('Erro: ' + e.message);
+  }
+}
+
+async function carregarHistorico(a, box) {
+  try {
+    const h = await api(`/api/monitor/cliente/${a.device_id}/historico`);
+    if (!h.length) { box.textContent = 'Nenhuma ação registrada.'; return; }
+    box.replaceChildren(...h.map((x) => {
+      const d = document.createElement('div');
+      const partes = [quando(x.criado_em), ACOES_HIST[x.acao] || x.acao];
+      if (x.dias) partes.push(x.dias + ' dia(s)');
+      if (x.motivo) partes.push('Motivo: ' + x.motivo);
+      d.textContent = partes.join(' · ');
+      return d;
+    }));
+  } catch (e) {
+    box.textContent = 'Não foi possível carregar o histórico.';
+  }
+}
+
+function abrirCliente(a) {
+  const dlg = $('dlg');
+  const raiz = document.createElement('div');
+  raiz.className = 'dlg';
+
+  const titulo = document.createElement('h2');
+  titulo.textContent = nomeCliente(a);
+  const contato = document.createElement('div');
+  contato.className = 'sub';
+  contato.textContent = contatoCliente(a) || 'Sem contato';
+
+  const info = document.createElement('div');
+  info.className = 'info';
+  info.append(
+    linhaInfo('Status', tag(statusCliente(a))),
+    linhaInfo('Fase', tag(faseCliente(a))),
+    linhaInfo('Teste', a.teste_fim ? `${diasTexto(a.dias_teste)} (até ${dataCurta(a.teste_fim)})` : '—'),
+    linhaInfo('Pagamento', a.pago_ate ? `${diasTexto(a.dias_pago)} (até ${dataCurta(a.pago_ate)})` : 'Sem pagamento'),
+    linhaInfo('Cadastro', dataCurta(a.criado_em)),
+    linhaInfo('Visto por último', quando(a.ultimo_uso)),
+    linhaInfo('Motivo do bloqueio', motivoCliente(a)),
+  );
+  if (a.bloqueado && a.bloqueado_em) info.append(linhaInfo('Bloqueado em', quando(a.bloqueado_em)));
+
+  const campos = document.createElement('div');
+  campos.className = 'campos';
+  const lDias = document.createElement('label');
+  lDias.textContent = 'Dias';
+  const iDias = document.createElement('input');
+  iDias.id = 'dlg-dias'; iDias.type = 'number'; iDias.min = '1'; iDias.max = '3650'; iDias.value = '7';
+  lDias.appendChild(iDias);
+  const lMot = document.createElement('label');
+  lMot.textContent = 'Motivo (obrigatório para bloquear)';
+  const iMot = document.createElement('input');
+  iMot.id = 'dlg-motivo'; iMot.type = 'text'; iMot.maxLength = 300; iMot.placeholder = 'Ex.: pagamento não identificado';
+  lMot.appendChild(iMot);
+  campos.append(lDias, lMot);
+
+  const b = (txt, cls, acao) => {
+    const x = document.createElement('button');
+    x.type = 'button'; x.className = cls; x.textContent = txt;
+    x.addEventListener('click', () => executarAcao(a, acao));
+    return x;
+  };
+  const dias = document.createElement('div');
+  dias.className = 'grade';
+  dias.append(b('+ Dias de teste', '', 'dar_teste'), b('+ Dias pagos', '', 'dar_pago'), b('Encerrar teste', 'sec', 'encerrar_teste'), b('Encerrar pagamento', 'sec', 'encerrar_pago'));
+  const acesso = document.createElement('div');
+  acesso.className = 'grade';
+  acesso.append(
+    a.bloqueado ? b('Desbloquear', 'mini verde', 'desbloquear') : b('Bloquear', 'mini vermelho', 'bloquear'),
+    a.liberado ? b('Remover liberação sem limite', 'sec', 'remover_liberacao') : b('Liberar sem limite', 'sec', 'liberar_total'),
+  );
+  acesso.querySelectorAll('button.mini').forEach((x) => { x.style.padding = '8px 14px'; x.style.fontSize = '13px'; x.style.borderRadius = '8px'; });
+
+  const th = document.createElement('h3');
+  th.textContent = 'Histórico de ações';
+  th.style.margin = '4px 0 0';
+  const hist = document.createElement('div');
+  hist.className = 'hist';
+  hist.textContent = 'Carregando…';
+
+  const fim = document.createElement('div');
+  fim.className = 'fim';
+  const fechar = document.createElement('button');
+  fechar.type = 'button'; fechar.className = 'sec'; fechar.textContent = 'Fechar';
+  fechar.addEventListener('click', fecharDialogo);
+  fim.appendChild(fechar);
+
+  raiz.append(titulo, contato, info, campos, dias, acesso, th, hist, fim);
+  dlg.replaceChildren(raiz);
+  if (!dlg.open) dlg.showModal();
+  carregarHistorico(a, hist);
+}
+
+function renderClientes() {
+  const todos = [...dados.aparelhos].sort((x, y) => {
+    const dx = Math.min(x.dias_teste ?? 1e9, x.dias_pago ?? 1e9);
+    const dy = Math.min(y.dias_teste ?? 1e9, y.dias_pago ?? 1e9);
+    return dx - dy;
+  });
+  const G = {
+    teste: todos.filter((a) => !a.liberado && a.fase === 'teste' && !a.teste_vencido),
+    pago: todos.filter((a) => !a.liberado && a.fase === 'assinatura' && !a.teste_vencido),
+    bloqueados: todos.filter((a) => a.bloqueado),
+    vencidos: todos.filter((a) => a.teste_vencido),
+    liberados: todos.filter((a) => a.liberado),
+  };
+  const lista = filtro.clientes === 'todos' ? todos : G[filtro.clientes] || todos;
+  card('clientes', todos.length, `${G.teste.length} teste · ${G.pago.length} pagando · ${G.bloqueados.length} bloqueados`);
+  tabs('t-clientes', 'clientes', [['todos', 'Todos'], ['teste', 'Em teste'], ['pago', 'Pagando'], ['vencidos', 'Vencidos'], ['bloqueados', 'Bloqueados'], ['liberados', 'Liberados']]);
+  stats('r-clientes', [['Em teste', G.teste.length], ['Pagando', G.pago.length], ['Vencidos', G.vencidos.length], ['Bloqueados', G.bloqueados.length], ['Liberados', G.liberados.length]]);
+
+  tabela('tb-clientes', [
+    { t: 'Cliente', f: (a) => nomeCliente(a) },
+    { t: 'Contato', c: 'desc', f: (a) => contatoCliente(a) },
+    { t: 'Fase', f: (a) => tag(faseCliente(a)) },
+    { t: 'Teste', f: (a) => celulaDias(a.dias_teste, a.teste_fim) },
+    { t: 'Pagamento', f: (a) => a.pago_ate ? celulaDias(a.dias_pago, a.pago_ate) : '—' },
+    { t: 'Status', f: (a) => tag(statusCliente(a)) },
+    { t: 'Motivo', c: 'desc', f: (a) => motivoCliente(a) },
+    { t: 'Ações', f: (a) => {
+        const x = document.createElement('button');
+        x.type = 'button'; x.className = 'mini cinza'; x.textContent = 'Gerenciar';
+        x.addEventListener('click', () => abrirCliente(a));
+        return x;
+    } },
   ], lista);
 }
 
@@ -544,7 +789,6 @@ function renderFalhas() {
   ], falhas);
 }
 
-// ---------------- Monitor do sistema ----------------
 let sis = null;
 let serieGraf = 'carga';
 let timerSis = null;
@@ -689,11 +933,10 @@ async function tickSistema(forcar) {
     renderSistema(e);
   }
 }
-// ---------------- fim do monitor do sistema ----------------
 
 function renderTudo() {
   if (!dados.resumo) return;
-  [renderAcessos, renderAparelhos, renderAprovados, renderRecebido,
+  [renderAcessos, renderAparelhos, renderClientes, renderAprovados, renderRecebido,
    renderTotal, renderUltimos, renderPendentes, renderFalhas].forEach((fn) => {
     try { fn(); } catch (e) { console.error('[painel]', fn.name, e); }
   });
@@ -711,7 +954,10 @@ function selecionar(view) {
 async function api(caminho, opcoes = {}) {
   const r = await fetch(caminho, { ...opcoes, headers: { 'x-admin-token': token, ...(opcoes.headers || {}) } });
   if (r.status === 401) throw Object.assign(new Error('Senha inválida.'), { auth: true });
-  if (!r.ok) throw new Error('Erro ' + r.status);
+  if (!r.ok) {
+    const j = await r.json().catch(() => null);
+    throw new Error((j && j.erro) || 'Erro ' + r.status);
+  }
   return r.json();
 }
 
@@ -737,7 +983,7 @@ async function atualizar() {
       api('/api/monitor/resumo'),
       api('/api/monitor/acessos?limite=300'),
       api('/api/monitor/pagamentos?limite=300'),
-      api('/api/monitor/aparelhos?limite=300'),
+      api('/api/monitor/aparelhos?limite=500'),
     ]);
     dados = { resumo, acessos, pagamentos, aparelhos };
     renderTudo();
@@ -775,6 +1021,7 @@ function sair(msg) {
   clearInterval(timerSis);
   sessionStorage.removeItem(chave);
   token = '';
+  if ($('dlg').open) $('dlg').close();
   $('erro').textContent = msg || '';
   $('entrada').style.display = 'flex';
 }

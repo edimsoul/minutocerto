@@ -27,8 +27,6 @@ create table if not exists assinaturas (
   atualizado_em timestamptz not null default now()
 );
 
-alter table assinaturas add column if not exists reembolsado_em timestamptz;
-
 alter table assinaturas enable row level security;
 
 alter table aparelhos add column if not exists ultimo_uso timestamptz;
@@ -73,3 +71,19 @@ alter table acessos enable row level security;
 alter table pagamentos enable row level security;
 alter table sincronizacoes enable row level security;
 alter table mp_contas enable row level security;
+
+alter table aparelhos add column if not exists liberado boolean not null default false;
+alter table aparelhos add column if not exists teste_ate timestamptz;
+alter table aparelhos add column if not exists motivo_bloqueio text;
+alter table aparelhos add column if not exists bloqueado_em timestamptz;
+
+create table if not exists historico_admin (
+  id bigint generated always as identity primary key,
+  criado_em timestamptz not null default now(),
+  device_id text not null,
+  acao text not null,
+  dias int,
+  motivo text
+);
+create index if not exists historico_admin_device_idx on historico_admin (device_id, criado_em desc);
+alter table historico_admin enable row level security;

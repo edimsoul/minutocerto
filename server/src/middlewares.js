@@ -9,7 +9,7 @@ const requerApp = (req, res, next) =>
 
 const lerAparelho = (id) =>
   db.from('aparelhos')
-    .select('segredo_hash, bloqueado, liberado, criado_em, pago_ate')
+    .select('segredo_hash, bloqueado, liberado, criado_em, pago_ate, teste_ate, motivo_bloqueio')
     .eq('device_id', id).maybeSingle();
 
 const aparelho = (permitirVencido) => async (req, res, next) => {
@@ -34,13 +34,18 @@ const aparelho = (permitirVencido) => async (req, res, next) => {
       return res.status(401).json({ erro: 'Aparelho não autorizado.', codigo: 'aparelho' });
     }
     if (c.dados.bloqueado) {
-      return res.status(403).json({ erro: 'Este aparelho foi bloqueado. Fale com o suporte.', codigo: 'bloqueado' });
+      const motivo = c.dados.motivo_bloqueio || null;
+      return res.status(403).json({
+        erro: motivo ? `Este aparelho foi bloqueado. Motivo: ${motivo}` : 'Este aparelho foi bloqueado. Fale com o suporte.',
+        codigo: 'bloqueado',
+        motivo,
+      });
     }
     const teste = infoTeste(c.dados);
     if (teste.vencido && !permitirVencido) {
       const assinatura = teste.fase === 'assinatura';
       return res.status(403).json({
-        erro: assinatura ? 'A mensalidade venceu. Renove para continuar.' : 'O teste gratuito de 20 dias acabou. Fale com o suporte.',
+        erro: assinatura ? 'A mensalidade venceu. Renove para continuar.' : 'O teste gratuito acabou. Fale com o suporte.',
         codigo: assinatura ? 'assinatura_vencida' : 'teste_expirado',
       });
     }

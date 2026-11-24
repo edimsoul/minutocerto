@@ -1,4 +1,3 @@
-// Painel administrativo (/monitor e /api/monitor/*).
 const express = require('express');
 const path = require('path');
 const db = require('../db');
@@ -6,8 +5,8 @@ const { falha, exige, idValido, rota } = require('../utils');
 const { limiteIp, cacheAp } = require('../limites');
 const { requerAdmin } = require('../middlewares');
 const { infoTeste } = require('../teste');
+const { DIA_MS } = require('../config');
 const { reconciliarPendentes } = require('../jobs');
-const sistema = require('../sistema');
 
 const router = express.Router();
 const API = '/api/monitor';
@@ -21,7 +20,6 @@ const contar = async (consulta) => {
 const somar = (arr, campo) => arr.reduce((s, x) => s + (Number(x[campo]) || 0), 0);
 const limiteConsulta = (req) => Math.min(Math.max(parseInt(req.query.limite, 10) || 50, 1), 500);
 
-// início do dia/semana/mês no horário de Brasília (UTC-3)
 function inicioDoPeriodo(p) {
   if (p === 'tudo') return new Date(0).toISOString();
   const b = new Date(Date.now() - 3 * 3600e3);
@@ -31,6 +29,14 @@ function inicioDoPeriodo(p) {
   else if (p === 'mes') d = 1;
   return new Date(Date.UTC(y, m, d) + 3 * 3600e3).toISOString();
 }
+
+const registrarHistorico = (device_id, acao, dias, motivo) =>
+  db.from('historico_admin').insert({ device_id, acao, dias: dias || null, motivo: motivo || null })
+    .then((r) => { if (r?.error) console.error('[historico_admin]', r.error.message); }, () => {});
+
+const diasAte = (iso) => (iso ? Math.ceil((new Date(iso).getTime() - Date.now()) / DIA_MS) : null);
+
+const ACOES = ['bloquear', 'desbloquear', 'dar_teste', 'dar_pago', 'encerrar_teste', 'encerrar_pago', 'liberar_total', 'remover_liberacao'];
 
 router.get('/monitor', (req, res) => {
   res.set('X-Robots-Tag', 'noindex, nofollow');
@@ -88,27 +94,68 @@ router.get(`${API}/clientes`, ...protegido, rota(async (req, res) => {
   });
 }));
 
-router.get(`${API}/sistema`, limiteIp('mon-sis', 120), requerAdmin, (req, res) => {
-  res.set('Cache-Control', 'no-store');
-  res.json(sistema.snapshot());
-});
-
 router.post(`${API}/bloquear`, limiteIp('mon', 30), requerAdmin, rota(async (req, res) => {
   const id = req.body?.device_id;
   if (!idValido(id)) throw falha(400, 'device_id inválido.');
-  // desbloquear NÃO concede mais acesso livre; o teste/assinatura continua valendo
-  exige(await db.from('aparelhos').update({ bloqueado: !!req.body?.bloquear }).eq('device_id', id));
+  const bloquear = !!req.body?.bloquear;
+  const motivo = String(req.body?.motivo || '').trim().slice(0, 300);
+  if (bloquear && !motivo) throw falha(400, 'Informe o motivo do bloqueio.');
+  exige(await db.from('aparelhos').update(bloquear
+    ? { bloqueado: true, motivo_bloqueio: motivo, bloqueado_em: new Date().toISOString() }
+    : { bloqueado: false, motivo_bloqueio: null, bloqueado_em: null }).eq('device_id', id));
   cacheAp.delete(id);
+  registrarHistorico(id, bloquear ? 'bloquear' : 'desbloquear', 0, motivo);
   res.json({ ok: true });
 }));
 
-// libera um aparelho por tempo indeterminado (ação explícita, separada do desbloqueio)
 router.post(`${API}/liberar`, limiteIp('mon', 30), requerAdmin, rota(async (req, res) => {
   const id = req.body?.device_id;
   if (!idValido(id)) throw falha(400, 'device_id inválido.');
   exige(await db.from('aparelhos').update({ liberado: !!req.body?.liberar }).eq('device_id', id));
   cacheAp.delete(id);
+  registrarHistorico(id, req.body?.liberar ? 'liberar_total' : 'remover_liberacao', 0, '');
   res.json({ ok: true });
+}));
+
+router.post(`${API}/cliente/acao`, limiteIp('mon', 30), requerAdmin, rota(async (req, res) => {
+  const { device_id: id, acao } = req.body || {};
+  if (!idValido(id)) throw falha(400, 'device_id inválido.');
+  if (!ACOES.includes(acao)) throw falha(400, 'Ação inválida.');
+  const dias = Math.min(Math.max(parseInt(req.body?.dias, 10) || 0, 0), 3650);
+  const motivo = String(req.body?.motivo || '').trim().slice(0, 300);
+  if ((acao === 'dar_teste' || acao === 'dar_pago') && dias < 1) throw falha(400, 'Informe os dias (1 ou mais).');
+  if (acao === 'bloquear' && !motivo) throw falha(400, 'Informe o motivo do bloqueio.');
+
+  const ap = exige(await db.from('aparelhos')
+    .select('device_id, criado_em, pago_ate, teste_ate, liberado').eq('device_id', id).maybeSingle());
+  if (!ap) throw falha(404, 'Aparelho não encontrado.');
+
+  const agora = Date.now();
+  const info = infoTeste(ap);
+  const fimTeste = info.fimTeste ? new Date(info.fimTeste).getTime() : 0;
+  const pagoAte = ap.pago_ate ? new Date(ap.pago_ate).getTime() : 0;
+  const iso = (t) => new Date(t).toISOString();
+  let upd;
+
+  if (acao === 'bloquear') upd = { bloqueado: true, motivo_bloqueio: motivo, bloqueado_em: iso(agora) };
+  else if (acao === 'desbloquear') upd = { bloqueado: false, motivo_bloqueio: null, bloqueado_em: null };
+  else if (acao === 'dar_teste') upd = { teste_ate: iso(Math.max(agora, fimTeste) + dias * DIA_MS) };
+  else if (acao === 'dar_pago') upd = { pago_ate: iso(Math.max(agora, pagoAte) + dias * DIA_MS) };
+  else if (acao === 'encerrar_teste') upd = { teste_ate: iso(agora - 1000) };
+  else if (acao === 'encerrar_pago') upd = { pago_ate: null };
+  else if (acao === 'liberar_total') upd = { liberado: true };
+  else upd = { liberado: false };
+
+  exige(await db.from('aparelhos').update(upd).eq('device_id', id));
+  cacheAp.delete(id);
+  await registrarHistorico(id, acao, dias, motivo);
+  res.json({ ok: true });
+}));
+
+router.get(`${API}/cliente/:id/historico`, ...protegido, rota(async (req, res) => {
+  if (!idValido(req.params.id)) throw falha(400, 'device_id inválido.');
+  res.json(exige(await db.from('historico_admin').select('criado_em, acao, dias, motivo')
+    .eq('device_id', req.params.id).order('criado_em', { ascending: false }).limit(30)));
 }));
 
 router.get(`${API}/acessos`, ...protegido, rota(async (req, res) => {
@@ -123,7 +170,6 @@ router.post(`${API}/reconciliar`, limiteIp('mon', 20), requerAdmin, rota(async (
   res.json({ ok: true, ...(await reconciliarPendentes()) });
 }));
 
-// lista leve: o banco devolve só os 3 campos usados, nunca o JSON inteiro
 router.get(`${API}/aparelhos`, ...protegido, rota(async (req, res) => {
   const sinc = exige(await db.from('sincronizacoes')
     .select([
@@ -138,7 +184,7 @@ router.get(`${API}/aparelhos`, ...protegido, rota(async (req, res) => {
   const ids = sinc.map((s) => s.device_id);
   const aps = ids.length
     ? exige(await db.from('aparelhos')
-      .select('device_id, bloqueado, liberado, criado_em, pago_ate, ultimo_uso').in('device_id', ids))
+      .select('device_id, bloqueado, liberado, criado_em, pago_ate, teste_ate, motivo_bloqueio, bloqueado_em, ultimo_uso').in('device_id', ids))
     : [];
   const porId = new Map(aps.map((a) => [a.device_id, a]));
 
@@ -149,8 +195,16 @@ router.get(`${API}/aparelhos`, ...protegido, rota(async (req, res) => {
       device_id: item.device_id,
       versao: item.versao,
       atualizado_em: item.atualizado_em,
-      bloqueado: !!a?.bloqueado,                 // bloqueio manual
-      teste_vencido: !!teste?.vencido,           // vencimento (campo separado)
+      bloqueado: !!a?.bloqueado,
+      teste_vencido: !!teste?.vencido,
+      liberado: !!a?.liberado,
+      motivo_bloqueio: a?.motivo_bloqueio || null,
+      bloqueado_em: a?.bloqueado_em || null,
+      criado_em: a?.criado_em || null,
+      teste_fim: teste?.fimTeste || null,
+      pago_ate: teste?.pagoAte || null,
+      dias_teste: diasAte(teste?.fimTeste),
+      dias_pago: diasAte(teste?.pagoAte),
       online: !!a?.ultimo_uso && Date.now() - new Date(a.ultimo_uso).getTime() < 3 * 60000,
       fase: teste?.fase || null,
       vence_em: teste?.venceEm || null,
@@ -163,7 +217,6 @@ router.get(`${API}/aparelhos`, ...protegido, rota(async (req, res) => {
   }));
 }));
 
-// detalhe de um aparelho (aqui sim vem o JSON completo)
 router.get(`${API}/aparelhos/:id`, ...protegido, rota(async (req, res) => {
   if (!idValido(req.params.id)) throw falha(400, 'device_id inválido.');
   const s = exige(await db.from('sincronizacoes').select('dados, versao, atualizado_em')
