@@ -27,6 +27,8 @@ create table if not exists assinaturas (
   atualizado_em timestamptz not null default now()
 );
 
+alter table assinaturas add column if not exists reembolsado_em timestamptz;
+
 alter table assinaturas enable row level security;
 
 alter table aparelhos add column if not exists ultimo_uso timestamptz;

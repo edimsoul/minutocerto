@@ -47,10 +47,10 @@ const TITULOS = {
 };
 
 const estaEmAndamento = (x) =>
-  !!x && !!(x.status === 'rodando' || x.inicio || x.iniciadoEm || x.rodando || x.emAndamento || x.ativo) && !x.fim && !x.finalizado;
+  !!x && !!(x.status === 'rodando' || x.inicio || x.iniciadoEm || x.rodando || x.emAndamento || x.ativo) && !x.fim && !x.finalizado && x.status !== 'finalizado';
 
 const fimDoAluguel = (x) => {
-  const limite = Number(x.limite ?? x.tempoLimite ?? x.minutos ?? x.dados?.limite);
+  const limite = Number(x.limite ?? x.pacote ?? x.tempoLimite ?? x.minutos ?? x.dados?.limite);
   const inicio = Number(x.inicio ?? x.iniciadoEm);
   if (!(limite > 0) || !(inicio > 0)) return null;
   return inicio + limite * 60000 - (Number(x.acumulado) || 0);

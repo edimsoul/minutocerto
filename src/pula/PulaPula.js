@@ -37,6 +37,9 @@ function precisaEscolherCobranca(v) {
   return !!v.pacote;
 }
 
+const esgotadoAgora = (v, agora) =>
+  !!v && v.status !== 'finalizado' && !!v.pacote && decorrido(v, agora) >= v.pacote * 60000;
+
 function SeletorTempo({ valor, onChange, preco, tabela }) {
   const ehOutro = valor != null && !PREDEFINIDOS.includes(valor);
   const [outro, setOutro] = useState(ehOutro);
@@ -195,6 +198,11 @@ export default function PulaPula({ pula, config, onPagamento }) {
     ? Math.max(0, arred2(valorPacote(totalEdit, preco, tabela) - (Number(editando.pago) || 0)))
     : 0;
 
+  const avisosVisiveis = avisos
+    .map((id) => pula.itens.find((x) => x.id === id))
+    .filter((v) => esgotadoAgora(v, agora))
+    .map((v) => v.numero);
+
   useEffect(() => {
     const novos = [];
     pula.itens.forEach((v) => {
@@ -202,14 +210,20 @@ export default function PulaPula({ pula, config, onPagamento }) {
       const chave = `${v.id}-${v.pacote}`;
       if (decorrido(v, agora) >= v.pacote * 60000 && !avisados.current.has(chave)) {
         avisados.current.add(chave);
-        novos.push(v.numero);
+        novos.push(v.id);
       }
     });
-    if (novos.length) {
-      Vibration.vibrate(PADRAO_VIBRACAO);
-      setAvisos((a) => [...a, ...novos]);
-    }
+    if (novos.length) Vibration.vibrate(PADRAO_VIBRACAO);
+    setAvisos((a) => {
+      const manter = a.filter((id) => esgotadoAgora(pula.itens.find((x) => x.id === id), agora));
+      const prox = [...manter, ...novos.filter((id) => !manter.includes(id))];
+      return prox.length === a.length && prox.every((id, i) => id === a[i]) ? a : prox;
+    });
   }, [agora]);
+
+  useEffect(() => {
+    if (avisosVisiveis.length === 0) Vibration.cancel();
+  }, [avisosVisiveis.length]);
 
   useEffect(() => {
     if (!pendOutra) return;
@@ -360,7 +374,7 @@ export default function PulaPula({ pula, config, onPagamento }) {
 
   return (
     <>
-      {avisos.length > 0 && (
+      {avisosVisiveis.length > 0 && (
         <View
           style={{
             backgroundColor: cor.vermelho,
@@ -372,7 +386,7 @@ export default function PulaPula({ pula, config, onPagamento }) {
           }}>
           <MaterialCommunityIcons name="alarm-light" size={26} color="#fff" />
           <Text style={{ flex: 1, color: '#fff', fontWeight: '800', fontSize: 15 }}>
-            Tempo esgotado: {avisos.join(', ')}
+            Tempo esgotado: {avisosVisiveis.join(', ')}
           </Text>
           <TouchableOpacity
             onPress={fecharAviso}
