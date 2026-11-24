@@ -2,6 +2,7 @@
 const { PORT } = require('./src/config');
 const { app, assinaturaRouter } = require('./src/app');
 const { iniciarJobs } = require('./src/jobs');
+const sistema = require('./src/sistema');
 
 process.on('unhandledRejection', (e) => console.error('[unhandledRejection]', e));
 process.on('uncaughtException', (e) => console.error('[uncaughtException]', e));
@@ -10,6 +11,7 @@ const servidor = app.listen(PORT, () => console.log(`MinutoCerto servidor na por
 servidor.requestTimeout = 60000;
 servidor.headersTimeout = 30000;
 servidor.keepAliveTimeout = 65000;
+sistema.iniciar(servidor);
 
 const parar = iniciarJobs(assinaturaRouter);
 

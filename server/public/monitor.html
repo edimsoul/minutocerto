@@ -82,7 +82,23 @@
   input { font:inherit; font-size:16px; padding:11px 12px; border-radius:8px; border:1px solid var(--linha); background:var(--card); color:var(--tinta); }
   #erro { color:var(--vermelho); font-size:13px; min-height:16px; white-space:pre-line; line-height:1.5; }
 
-  @media (max-width: 900px) { .cards { grid-template-columns:repeat(2, 1fr); } }
+  .banner { display:flex; align-items:flex-start; gap:12px; border-radius:12px; padding:16px 18px; color:#fff; margin:8px 0 16px; background:#2f9e5b; }
+  .banner.atencao { background:#c98a12; } .banner.critico { background:#c0392b; } .banner.sem { background:#6b7280; }
+  .banner .ic { font-size:22px; line-height:1; background:rgba(255,255,255,.22); border-radius:6px; padding:3px 8px; font-weight:800; }
+  .banner .tx { font-size:22px; font-weight:800; letter-spacing:.5px; }
+  .banner ul { margin:6px 0 0; padding-left:18px; font-size:14px; }
+  .banner .sub2 { font-size:13px; opacity:.92; margin-top:4px; }
+  .metricas { display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:18px; }
+  .metrica { background:var(--card); border:1px solid var(--linha); border-top:4px solid var(--m,#2f9e5b); border-radius:10px; padding:12px 14px; }
+  .metrica .r { font-size:13px; color:var(--suave); }
+  .metrica .n { font-size:24px; font-weight:800; margin:2px 0 6px; }
+  .metrica .nota { font-size:12px; color:var(--suave); margin-top:6px; }
+  .barra { height:8px; border-radius:6px; background:var(--linha); overflow:hidden; }
+  .barra i { display:block; height:100%; width:0; background:var(--m,#2f9e5b); transition:width .4s; }
+  .grafico { background:var(--card); border:1px solid var(--linha); border-radius:10px; padding:12px 12px 8px; margin-bottom:18px; }
+  .grafico svg { width:100%; height:auto; display:block; }
+  .grafico .tabs { margin:0 0 6px; }
+  @media (max-width: 900px) { .cards { grid-template-columns:repeat(2, 1fr); } .metricas { grid-template-columns:repeat(2, 1fr); } }
 
   @media (max-width: 600px) {
     body { padding:12px 10px 24px; }
@@ -91,6 +107,8 @@
     .logo-grande { height:52px; }
     h2 { font-size:16px; }
     .cards { gap:8px; }
+    .banner .tx { font-size:18px; }
+    .metrica .n { font-size:20px; }
     button.card { padding:10px 11px; }
     .card .n { font-size:19px; }
     .card .r { font-size:12px; }
@@ -170,6 +188,7 @@ const GRUPOS = {
 };
 
 const CARDS = [
+  ['sistema', 'Sistema', '#2f9e5b'],
   ['acessos', 'Acessos hoje', '#64748b'],
   ['aparelhos', 'Aparelhos conectados', '#5b8a8a'],
   ['aprovados', 'Pagamentos aprovados hoje', '#4f8a6b'],
@@ -180,6 +199,7 @@ const CARDS = [
   ['falhas', 'Senhas erradas', '#a86b6b'],
 ];
 const SECOES = [
+  ['sistema', 'Monitor do sistema', 'Servidor ao vivo: carga, CPU, memória, banco de dados e IPs.', [['tb-sis-ips', 'Pedidos por IP (último minuto)']]],
   ['acessos', 'Acessos de hoje', 'Aparelho, usuário, IP e tudo o que o app enviou em cada acesso.', [['tb-acessos', '']]],
   ['aparelhos', 'Aparelhos conectados', 'Aparelhos que sincronizaram, com dados do cliente, plano e bloqueio.', [['tb-aparelhos', '']]],
   ['aprovados', 'Pagamentos aprovados hoje', 'Quantidade, valores e o que foi vendido em cada pagamento.', [['tb-aprovados-grupo', 'Por brinquedo / descrição'], ['tb-aprovados', 'Pagamentos']]],
@@ -208,6 +228,7 @@ function montarEstrutura() {
       <div class="resumo" id="r-${id}"></div>
       ${tabs.map(([tid, tt]) => `${tt ? `<h3>${tt}</h3>` : ''}<div class="rolagem"><table id="${tid}"></table></div>`).join('')}
     </div>`).join('');
+  montarSistema();
 }
 
 function tabela(id, cols, rows) {
@@ -523,6 +544,152 @@ function renderFalhas() {
   ], falhas);
 }
 
+// ---------------- Monitor do sistema ----------------
+let sis = null;
+let serieGraf = 'carga';
+let timerSis = null;
+let tickSis = 0;
+
+const COR_OK = '#2f9e5b', COR_ATENCAO = '#c98a12', COR_CRITICO = '#c0392b';
+const NIVEIS = { ok: ['SISTEMA OK', COR_OK, '✔', ''], atencao: ['ATENÇÃO', COR_ATENCAO, '!', 'atencao'], critico: ['CRÍTICO', COR_CRITICO, '✖', 'critico'] };
+const METRICAS = [['carga', 'Carga de pedidos'], ['cpu', 'CPU'], ['ram', 'Memória RAM'], ['banco', 'Banco (latência p95)'], ['ips', 'IPs ativos (1 min)'], ['resp', 'Tempo de resposta (p95)']];
+const SERIES = { carga: ['Carga de pedidos (%)', '#d97706'], cpu: ['CPU (%)', '#2563eb'], ram: ['Memória (%)', '#7c3aed'] };
+
+const corPct = (v, aten, crit) => (v >= crit ? COR_CRITICO : v >= aten ? COR_ATENCAO : COR_OK);
+const fmtPct = (v) => (Math.round(num(v) * 10) / 10).toString().replace('.', ',') + '%';
+function fmtDur(ms) {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return s + ' s';
+  if (s < 86400) return Math.floor(s / 60) + ' min ' + (s % 60) + ' s';
+  return Math.floor(s / 86400) + ' d ' + Math.floor((s % 86400) / 3600) + ' h';
+}
+
+function montarSistema() {
+  const h3 = $('tb-sis-ips').closest('.rolagem').previousElementSibling;
+  h3.insertAdjacentHTML('beforebegin', `
+    <div class="banner sem" id="sis-banner">
+      <span class="ic" id="sis-ic">…</span>
+      <div><div class="tx" id="sis-tx">Carregando…</div><ul id="sis-motivos"></ul><div class="sub2" id="sis-sub"></div></div>
+    </div>
+    <div class="metricas">
+      ${METRICAS.map(([id, rot]) => `
+        <div class="metrica" id="m-${id}">
+          <div class="r">${rot}</div><div class="n" id="mn-${id}">—</div>
+          <div class="barra"><i id="mb-${id}"></i></div><div class="nota" id="mt-${id}"></div>
+        </div>`).join('')}
+    </div>
+    <h3>Ao longo do tempo (últimos 15 minutos)</h3>
+    <div class="grafico"><div class="tabs" id="sis-abas"></div><div id="sis-grafico"></div></div>`);
+  $('sis-abas').replaceChildren(...Object.entries(SERIES).map(([k, [rot]]) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = rot.replace(/ \(.*\)/, ''); b.dataset.k = k;
+    b.addEventListener('click', () => { serieGraf = k; desenharGrafico(); });
+    return b;
+  }));
+}
+
+function metrica(id, valor, pct, cor, nota) {
+  const el = $('m-' + id);
+  el.style.setProperty('--m', cor);
+  $('mn-' + id).textContent = valor;
+  $('mb-' + id).style.width = Math.max(0, Math.min(100, pct)) + '%';
+  $('mt-' + id).textContent = nota || '';
+}
+
+function svgEl(tag, attrs, texto) {
+  const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  Object.entries(attrs || {}).forEach(([k, v]) => e.setAttribute(k, v));
+  if (texto !== undefined) e.textContent = texto;
+  return e;
+}
+
+function desenharGrafico() {
+  document.querySelectorAll('#sis-abas button').forEach((b) => b.classList.toggle('ativo', b.dataset.k === serieGraf));
+  const box = $('sis-grafico');
+  const L = 38, R = 10, T = 10, B = 24, W = 700, H = 220;
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': SERIES[serieGraf][0] });
+  const y = (v) => T + (H - T - B) * (1 - v / 100);
+  [0, 33, 67, 100].forEach((v) => {
+    svg.appendChild(svgEl('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: '#e5e7eb', 'stroke-width': 1 }));
+    svg.appendChild(svgEl('text', { x: L - 6, y: y(v) + 4, 'text-anchor': 'end', 'font-size': 11, fill: '#6b7280' }, String(v)));
+  });
+  const fim = sis ? sis.agora : Date.now();
+  const ini = fim - 15 * 60000;
+  const x = (t) => L + ((t - ini) / (fim - ini)) * (W - L - R);
+  [['-15 min', ini], ['-10', fim - 10 * 60000], ['-5', fim - 5 * 60000], ['agora', fim]].forEach(([rot, t], i) => {
+    svg.appendChild(svgEl('text', { x: x(t), y: H - 6, 'text-anchor': i === 0 ? 'start' : i === 3 ? 'end' : 'middle', 'font-size': 11, fill: '#6b7280' }, rot));
+  });
+  const idx = { carga: 1, cpu: 2, ram: 3 }[serieGraf];
+  const pts = (sis ? sis.historico : []).filter((h) => h[0] >= ini).map((h) => `${x(h[0]).toFixed(1)},${y(Math.min(100, h[idx])).toFixed(1)}`);
+  if (pts.length > 1) svg.appendChild(svgEl('polyline', { points: pts.join(' '), fill: 'none', stroke: SERIES[serieGraf][1], 'stroke-width': 2.2, 'stroke-linejoin': 'round' }));
+  else if (pts.length === 1) { const [cx, cy] = pts[0].split(','); svg.appendChild(svgEl('circle', { cx, cy, r: 3, fill: SERIES[serieGraf][1] })); }
+  box.replaceChildren(svg);
+}
+
+function renderSistema(erro) {
+  const cardEl = document.querySelector('.card[data-view="sistema"]');
+  const banner = $('sis-banner');
+  if (!sis) {
+    banner.className = 'banner critico';
+    $('sis-ic').textContent = '✖';
+    $('sis-tx').textContent = 'SEM RESPOSTA';
+    $('sis-motivos').replaceChildren();
+    $('sis-sub').textContent = erro ? 'Não foi possível ler o servidor: ' + erro.message : '';
+    card('sistema', 'Sem resposta', '');
+    cardEl.style.setProperty('--c', COR_CRITICO);
+    $('c-sistema').style.color = COR_CRITICO;
+    return;
+  }
+  const [rot, cor, icone, classe] = NIVEIS[sis.status.nivel] || NIVEIS.ok;
+  banner.className = 'banner ' + (sis.coletando ? classe : 'sem');
+  $('sis-ic').textContent = sis.coletando ? icone : '?';
+  $('sis-tx').textContent = sis.coletando ? rot : 'COLETA DESLIGADA';
+  const motivos = sis.coletando
+    ? (sis.status.motivos.length ? sis.status.motivos : ['Tudo funcionando normalmente.'])
+    : ['Adicione sistema.iniciar(servidor) no server.js e reinicie o servidor.'];
+  $('sis-motivos').replaceChildren(...motivos.map((m) => { const li = document.createElement('li'); li.textContent = m; return li; }));
+  $('sis-sub').textContent = 'Ao vivo · ligado há ' + fmtDur(sis.ligadoMs) + ' · atualizado às ' + new Date(sis.agora).toLocaleTimeString('pt-BR');
+
+  const c = sis.carga, cp = sis.cpu, r = sis.ram, b = sis.banco, n = sis.rede;
+  metrica('carga', fmtPct(c.pct), c.pct, corPct(c.pct, 60, 90), `${c.reqMin} pedidos no último minuto · capacidade ${c.capacidade}/min`);
+  metrica('cpu', fmtPct(cp.pct), cp.pct, corPct(cp.pct, 70, 90), `${String(cp.nucleos).replace('.', ',')} núcleo(s) disponíveis`);
+  metrica('ram', r.usadoMb.toString().replace('.', ',') + ' MB', r.pct, corPct(r.pct, 80, 92), `${fmtPct(r.pct)} de ${r.limiteMb} MB`);
+  const corBanco = b.ok === false ? COR_CRITICO : b.p95 >= 2000 ? COR_CRITICO : b.p95 >= 800 ? COR_ATENCAO : COR_OK;
+  metrica('banco', b.ok === false ? 'Sem resposta' : b.p95 + ' ms', Math.min(100, (b.p95 / 2000) * 100), corBanco,
+    `${b.gravacoes} gravações · ${b.fila} em andamento agora`);
+  metrica('ips', String(n.ips), Math.min(100, n.ips), COR_OK, `${n.aparelhos} aparelhos ativos no último minuto`);
+  const corResp = n.respP95Ms >= 2000 ? COR_CRITICO : n.respP95Ms >= 800 ? COR_ATENCAO : COR_OK;
+  metrica('resp', n.respP95Ms + ' ms', Math.min(100, (n.respP95Ms / 2000) * 100), corResp,
+    `${n.erros5xx} erros do servidor · ${n.limitados} barrados (429) no último minuto`);
+
+  tabela('tb-sis-ips', [
+    { t: 'IP', f: (i) => mono(i.ip) },
+    { t: 'Pedidos', f: (i) => i.pedidos },
+    { t: 'Unidades (aparelhos)', f: (i) => i.unidades },
+    { t: 'Nível', f: (i) => tag([i.nivel === 'normal' ? 'Normal' : i.nivel === 'alto' ? 'Alto' : 'Muito alto', i.nivel === 'normal' ? 'ok' : i.nivel === 'alto' ? 'meio' : 'ruim']) },
+  ], sis.ips);
+  desenharGrafico();
+
+  const textoCard = !sis.coletando ? 'Desligado' : sis.status.nivel === 'ok' ? 'OK' : sis.status.nivel === 'atencao' ? 'Atenção' : 'Crítico';
+  card('sistema', textoCard, `CPU ${fmtPct(cp.pct)} · RAM ${fmtPct(r.pct)} · Banco ${b.p95} ms`);
+  cardEl.style.setProperty('--c', sis.coletando ? cor : '#6b7280');
+  $('c-sistema').style.color = sis.coletando ? cor : '#6b7280';
+}
+
+async function tickSistema(forcar) {
+  tickSis += 1;
+  if (!forcar && (document.hidden || (viewAtual !== 'sistema' && tickSis % 4 !== 0))) return;
+  try {
+    sis = await api('/api/monitor/sistema');
+    renderSistema();
+  } catch (e) {
+    if (e.auth) return;
+    sis = null;
+    renderSistema(e);
+  }
+}
+// ---------------- fim do monitor do sistema ----------------
+
 function renderTudo() {
   if (!dados.resumo) return;
   [renderAcessos, renderAparelhos, renderAprovados, renderRecebido,
@@ -537,6 +704,7 @@ function selecionar(view) {
   document.querySelectorAll('.secao').forEach((s) => s.classList.toggle('visivel', s.id === 'v-' + view));
   $('dica').style.display = view ? 'none' : 'block';
   if (view) $('v-' + view).scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  if (view === 'sistema') tickSistema(true);
 }
 
 async function api(caminho, opcoes = {}) {
@@ -603,6 +771,7 @@ async function reconciliarEAtualizar() {
 
 function sair(msg) {
   clearInterval(timer);
+  clearInterval(timerSis);
   sessionStorage.removeItem(chave);
   token = '';
   $('erro').textContent = msg || '';
@@ -615,6 +784,10 @@ async function iniciar() {
   if (await atualizar()) {
     clearInterval(timer);
     timer = setInterval(atualizar, 15000);
+    clearInterval(timerSis);
+    tickSis = 0;
+    tickSistema(true);
+    timerSis = setInterval(tickSistema, 3000);
   }
 }
 

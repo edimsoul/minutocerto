@@ -1,4 +1,4 @@
-
+// Painel administrativo (/monitor e /api/monitor/*).
 const express = require('express');
 const path = require('path');
 const db = require('../db');
@@ -7,6 +7,7 @@ const { limiteIp, cacheAp } = require('../limites');
 const { requerAdmin } = require('../middlewares');
 const { infoTeste } = require('../teste');
 const { reconciliarPendentes } = require('../jobs');
+const sistema = require('../sistema');
 
 const router = express.Router();
 const API = '/api/monitor';
@@ -20,7 +21,7 @@ const contar = async (consulta) => {
 const somar = (arr, campo) => arr.reduce((s, x) => s + (Number(x[campo]) || 0), 0);
 const limiteConsulta = (req) => Math.min(Math.max(parseInt(req.query.limite, 10) || 50, 1), 500);
 
-
+// início do dia/semana/mês no horário de Brasília (UTC-3)
 function inicioDoPeriodo(p) {
   if (p === 'tudo') return new Date(0).toISOString();
   const b = new Date(Date.now() - 3 * 3600e3);
@@ -86,6 +87,11 @@ router.get(`${API}/clientes`, ...protegido, rota(async (req, res) => {
     em_teste_gratis: 0, pagando_taxa: contas,
   });
 }));
+
+router.get(`${API}/sistema`, limiteIp('mon-sis', 120), requerAdmin, (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(sistema.snapshot());
+});
 
 router.post(`${API}/bloquear`, limiteIp('mon', 30), requerAdmin, rota(async (req, res) => {
   const id = req.body?.device_id;
@@ -157,6 +163,7 @@ router.get(`${API}/aparelhos`, ...protegido, rota(async (req, res) => {
   }));
 }));
 
+// detalhe de um aparelho (aqui sim vem o JSON completo)
 router.get(`${API}/aparelhos/:id`, ...protegido, rota(async (req, res) => {
   if (!idValido(req.params.id)) throw falha(400, 'device_id inválido.');
   const s = exige(await db.from('sincronizacoes').select('dados, versao, atualizado_em')
