@@ -7,6 +7,7 @@ const { requerAdmin } = require('../middlewares');
 const { infoTeste } = require('../teste');
 const { DIA_MS } = require('../config');
 const { reconciliarPendentes } = require('../jobs');
+const sistema = require('../sistema');
 
 const router = express.Router();
 const API = '/api/monitor';
@@ -44,6 +45,10 @@ router.get('/monitor', (req, res) => {
 });
 
 const protegido = [limiteIp('mon', 60), requerAdmin];
+
+router.get(`${API}/sistema`, ...protegido, rota(async (req, res) => {
+  res.json(sistema.snapshot());
+}));
 
 router.get(`${API}/resumo`, ...protegido, rota(async (req, res) => {
   const hoje = inicioDoPeriodo('hoje');
