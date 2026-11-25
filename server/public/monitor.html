@@ -1,1059 +1,233 @@
-<!doctype html>
-<html lang="pt-BR">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MinutoCerto · Monitor</title>
-<style>
-  :root {
-    --fundo:#f2f5f7; --card:#fff; --tinta:#1f2937; --suave:#6b7280; --linha:#e5e7eb;
-    --topo:#f0f4f8; --azul:#374151; --verde:#3f7d5c; --vermelho:#a24b4b; --amarelo:#a16207; --alerta:#f6efdc;
-  }
-  * { box-sizing: border-box; }
-  body { max-width:1000px; margin:0 auto; padding:max(24px, env(safe-area-inset-top)) 16px 32px; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--fundo); color:var(--tinta); }
+const express = require('express');
+const path = require('path');
+const db = require('../db');
+const { falha, exige, idValido, rota } = require('../utils');
+const { limiteIp, cacheAp } = require('../limites');
+const { requerAdmin } = require('../middlewares');
+const { infoTeste } = require('../teste');
+const { DIA_MS } = require('../config');
+const { reconciliarPendentes } = require('../jobs');
+const sistema = require('../sistema');
 
-  header {
-    display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;
-    padding:0 0 14px; margin-bottom:6px; background:none;
-  }
-  h1 { margin:0; font-size:18px; }
-  .logo { display:block; height:56px; width:auto; max-width:100%; border-radius:8px; }
-  .logo-grande { height:64px; margin:0 auto 4px; }
-  .logo-texto { display:none; font-weight:800; font-size:18px; }
-  h2 { margin:0 0 4px; font-size:17px; }
-  h3 { margin:16px 0 4px; font-size:14px; color:var(--suave); }
-  .estado { font-size:13px; color:var(--suave); margin-right:4px; }
+const router = express.Router();
+const API = '/api/monitor';
+const head = { count: 'exact', head: true };
 
-  button { font:inherit; font-size:13px; padding:8px 14px; border-radius:8px; border:none; background:var(--azul); color:#fff; font-weight:600; cursor:pointer; }
-  button:hover { opacity:.9; }
-  button:disabled { opacity:.6; cursor:wait; }
-  button:focus-visible, input:focus-visible { outline:2px solid var(--azul); outline-offset:2px; }
-  button.sec { background:transparent; color:var(--tinta); border:1px solid var(--linha); }
-  button.titulo { background:none; color:var(--tinta); font-size:18px; font-weight:800; padding:2px 6px; margin-left:-6px; }
-  button.titulo:hover { background:var(--linha); opacity:1; }
-  button.mini { padding:4px 8px; font-size:12px; border-radius:4px; color:#fff; }
-  button.mini.verde { background:var(--verde); }
-  button.mini.vermelho { background:var(--vermelho); }
-  button.mini.cinza { background:var(--azul); }
-
-  main { padding:0; }
-  #aviso { display:none; background:var(--alerta); color:var(--amarelo); border-radius:8px; padding:8px 12px; font-size:13px; margin-bottom:12px; }
-
-  .cards { display:grid; grid-template-columns:repeat(4, 1fr); gap:10px; margin-bottom:18px; }
-  button.card {
-    background:var(--card); color:var(--tinta); text-align:left; width:100%; font:inherit;
-    border:1px solid var(--linha); border-left:4px solid var(--c,#94a3b8); border-radius:8px; padding:12px 14px;
-  }
-  button.card:hover { opacity:1; background:var(--fundo); }
-  button.card.ativo { border-color:var(--c); box-shadow:0 0 0 1px var(--c); }
-  .card .n { font-size:24px; font-weight:800; }
-  .card .r { font-size:13px; color:var(--suave); margin-bottom:4px; font-weight:400; }
-  .card .nota { font-size:12px; color:var(--suave); margin-top:2px; min-height:15px; font-weight:400; }
-
-  .dica { text-align:center; color:var(--suave); font-size:14px; padding:20px 0; }
-
-  .secao { display:none; }
-  .secao.visivel { display:block; }
-  .sub { color:var(--suave); font-size:13px; margin:0 0 8px; }
-  .nota-sec { color:var(--amarelo); font-size:13px; margin:0 0 8px; display:none; }
-
-  .resumo { display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:8px; margin:8px 0; }
-  .stat { background:var(--card); border:1px solid var(--linha); border-radius:8px; padding:10px 12px; }
-  .stat .l { font-size:12px; color:var(--suave); }
-  .stat .v { font-size:18px; font-weight:700; margin-top:2px; }
-
-  .tabs { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0; }
-  .tabs button { background:var(--linha); color:var(--tinta); }
-  .tabs button.ativo { background:var(--azul); color:#fff; }
-
-  .rolagem { overflow-x:auto; background:var(--card); border:1px solid var(--linha); border-radius:8px; margin:6px 0 22px; -webkit-overflow-scrolling:touch; }
-  table { width:100%; min-width:480px; border-collapse:collapse; font-size:13px; }
-  th, td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--linha); white-space:nowrap; vertical-align:top; }
-  th { font-size:13px; background:#f9fafb; color:var(--tinta); font-weight:600; }
-  tr:last-child td { border-bottom:none; }
-  td.desc { white-space:normal; min-width:200px; }
-  td .k { color:var(--suave); }
-  td.vazio { color:var(--suave); text-align:center; padding:16px; }
-  .tag { display:inline-block; padding:2px 8px; border-radius:20px; font-size:12px; font-weight:700; background:var(--linha); }
-  .ok { color:var(--verde); } .ruim { color:var(--vermelho); } .meio { color:var(--amarelo); }
-  .mono { font-family: ui-monospace, Consolas, monospace; font-size:12px; word-break:break-all; white-space:normal; }
-
-  #entrada { position:fixed; inset:0; z-index:10; background:var(--fundo); display:flex; align-items:center; justify-content:center; padding:20px; }
-  #entrada form { background:var(--card); border:1px solid var(--linha); border-radius:14px; padding:24px; width:100%; max-width:340px; display:grid; gap:12px; }
-  input { font:inherit; font-size:16px; padding:11px 12px; border-radius:8px; border:1px solid var(--linha); background:var(--card); color:var(--tinta); }
-  #erro { color:var(--vermelho); font-size:13px; min-height:16px; white-space:pre-line; line-height:1.5; }
-
-  dialog { border:1px solid var(--linha); border-radius:14px; padding:20px; width:min(94vw, 460px); max-height:90vh; overflow:auto; background:var(--card); color:var(--tinta); }
-  dialog::backdrop { background:rgba(0,0,0,.4); }
-  .dlg { display:grid; gap:12px; }
-  .dlg h2 { margin:0; }
-  .dlg .info { display:grid; gap:4px; font-size:13px; }
-  .dlg .info div { display:flex; justify-content:space-between; gap:12px; }
-  .dlg .info span:first-child { color:var(--suave); }
-  .dlg .info span:last-child { text-align:right; }
-  .dlg label { display:grid; gap:4px; font-size:13px; color:var(--suave); }
-  .dlg .campos { display:grid; grid-template-columns:110px 1fr; gap:8px; }
-  .dlg .grade { display:flex; gap:6px; flex-wrap:wrap; }
-  .dlg .grade button { padding:8px 10px; }
-  .dlg .hist { max-height:170px; overflow:auto; font-size:12px; border:1px solid var(--linha); border-radius:8px; padding:6px 10px; }
-  .dlg .hist div { padding:4px 0; border-bottom:1px solid var(--linha); }
-  .dlg .hist div:last-child { border-bottom:none; }
-  .dlg .fim { display:flex; justify-content:flex-end; }
-
-  .banner { display:flex; align-items:flex-start; gap:12px; border-radius:12px; padding:16px 18px; color:#fff; margin:8px 0 16px; background:#2f9e5b; }
-  .banner.atencao { background:#c98a12; } .banner.critico { background:#c0392b; } .banner.sem { background:#6b7280; }
-  .banner .ic { font-size:22px; line-height:1; background:rgba(255,255,255,.22); border-radius:6px; padding:3px 8px; font-weight:800; }
-  .banner .tx { font-size:22px; font-weight:800; letter-spacing:.5px; }
-  .banner ul { margin:6px 0 0; padding-left:18px; font-size:14px; }
-  .banner .sub2 { font-size:13px; opacity:.92; margin-top:4px; }
-  .metricas { display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:18px; }
-  .metrica { background:var(--card); border:1px solid var(--linha); border-top:4px solid var(--m,#2f9e5b); border-radius:10px; padding:12px 14px; }
-  .metrica .r { font-size:13px; color:var(--suave); }
-  .metrica .n { font-size:24px; font-weight:800; margin:2px 0 6px; }
-  .metrica .nota { font-size:12px; color:var(--suave); margin-top:6px; }
-  .barra { height:8px; border-radius:6px; background:var(--linha); overflow:hidden; }
-  .barra i { display:block; height:100%; width:0; background:var(--m,#2f9e5b); transition:width .4s; }
-  .grafico { background:var(--card); border:1px solid var(--linha); border-radius:10px; padding:12px 12px 8px; margin-bottom:18px; }
-  .grafico svg { width:100%; height:auto; display:block; }
-  .grafico .tabs { margin:0 0 6px; }
-  @media (max-width: 900px) { .cards { grid-template-columns:repeat(2, 1fr); } .metricas { grid-template-columns:repeat(2, 1fr); } }
-
-  @media (max-width: 600px) {
-    body { padding:12px 10px 24px; }
-    h1, button.titulo { font-size:16px; }
-    .logo { height:40px; }
-    .logo-grande { height:52px; }
-    h2 { font-size:16px; }
-    .cards { gap:8px; }
-    .banner .tx { font-size:18px; }
-    .metrica .n { font-size:20px; }
-    button.card { padding:10px 11px; }
-    .card .n { font-size:19px; }
-    .card .r { font-size:12px; }
-    .resumo { grid-template-columns:repeat(2, 1fr); }
-    .rolagem { background:none; border:none; overflow:visible; }
-    table { min-width:0; }
-    table, tbody, tr, td { display:block; width:100%; }
-    thead { display:none; }
-    tr { background:var(--card); border:1px solid var(--linha); border-radius:8px; margin-bottom:8px; padding:4px 0; }
-    td { display:flex; justify-content:space-between; gap:12px; text-align:right; white-space:normal; border:none; padding:5px 12px; word-break:break-word; }
-    td::before { content:attr(data-label); color:var(--suave); text-align:left; flex-shrink:0; }
-    td.desc { min-width:0; }
-    td.vazio { display:block; text-align:center; }
-    td.vazio::before { content:none; }
-  }
-</style>
-</head>
-<body>
-
-<div id="entrada">
-  <form id="form">
-    <img class="logo logo-grande" alt="MinutoCerto" onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
-    <h1 class="logo-texto" style="text-align:center">MinutoCerto</h1>
-    <div class="sub" style="text-align:center;margin:0">Monitor · acesso restrito</div>
-    <input id="token" type="password" placeholder="Senha de acesso" autocomplete="current-password" required>
-    <button type="submit">Entrar</button>
-    <div id="erro"></div>
-  </form>
-</div>
-
-<header>
-  <button class="titulo" id="inicio" type="button" title="Voltar ao início">
-    <img class="logo" alt="MinutoCerto" onerror="this.style.display='none';this.nextElementSibling.style.display='inline'">
-    <span class="logo-texto">MinutoCerto · Monitor</span>
-  </button>
-  <div>
-    <span class="estado" id="estado">—</span>
-    <button class="sec" id="atualizar" type="button">Atualizar</button>
-    <button class="sec" id="sair" type="button">Sair</button>
-  </div>
-</header>
-
-<main>
-  <div id="aviso"></div>
-  <div class="cards" id="cards"></div>
-  <div class="dica" id="dica">Toque em um card para ver os detalhes.</div>
-  <div id="secoes"></div>
-</main>
-
-<dialog id="dlg"></dialog>
-
-<script>
-const LOGO_SRC = '';
-
-const chave = 'mc_admin_token';
-let token = sessionStorage.getItem(chave) || '';
-let timer = null;
-let viewAtual = null;
-let dados = { resumo: null, acessos: [], pagamentos: [], aparelhos: [] };
-const filtro = { aparelhos: 'hoje', total: 'hoje', pendentes: 'todos', clientes: 'todos' };
-
-const $ = (id) => document.getElementById(id);
-const brl = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-const quando = (iso) => iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'medium' }) : '—';
-const dataCurta = (iso) => iso ? new Date(iso).toLocaleDateString('pt-BR') : '—';
-const num = (v) => Number(v) || 0;
-
-const EVENTOS = { abriu_app: ['Abriu o app', ''], login: ['Login', 'ok'], logout: ['Saiu', ''], falha_login: ['Senha errada', 'ruim'], reset_senha: ['Reset de senha', 'meio'], aceite_termos: ['Aceitou os termos', ''] };
-const STATUS = {
-  approved: ['Aprovado', 'ok'], pending: ['Pendente', 'meio'], pendente: ['Pendente', 'meio'], in_process: ['Em análise', 'meio'],
-  rejected: ['Recusado', 'ruim'], cancelled: ['Cancelado', 'ruim'], cancelado: ['Cancelado', 'ruim'], expired: ['Expirado', 'ruim'],
-  refunded: ['Estornado', 'ruim'], charged_back: ['Contestado', 'ruim'],
+const contar = async (consulta) => {
+  const r = await consulta;
+  if (r.error) throw new Error(r.error.message);
+  return r.count || 0;
 };
-const GRUPOS = {
-  pendentes: ['pending', 'pendente', 'in_process'],
-  cancelados: ['cancelled', 'cancelado', 'rejected', 'expired'],
-  estornados: ['refunded', 'charged_back'],
-};
-const ACOES_HIST = {
-  bloquear: 'Bloqueou', desbloquear: 'Desbloqueou', dar_teste: 'Deu dias de teste', dar_pago: 'Deu dias pagos',
-  encerrar_teste: 'Encerrou o teste', encerrar_pago: 'Encerrou o pagamento', liberar_total: 'Liberou sem limite', remover_liberacao: 'Removeu a liberação',
-};
+const somar = (arr, campo) => arr.reduce((s, x) => s + (Number(x[campo]) || 0), 0);
+const limiteConsulta = (req) => Math.min(Math.max(parseInt(req.query.limite, 10) || 50, 1), 500);
 
-const CARDS = [
-  ['sistema', 'Sistema', '#2f9e5b'],
-  ['clientes', 'Clientes e planos', '#5b6b8a'],
-  ['acessos', 'Acessos hoje', '#64748b'],
-  ['aparelhos', 'Aparelhos conectados', '#5b8a8a'],
-  ['aprovados', 'Pagamentos aprovados hoje', '#4f8a6b'],
-  ['recebido', 'Recebimentos hoje', '#3f7d5c'],
-  ['total', 'Recebimentos total', '#6b7a99'],
-  ['ultimos', 'Últimos acessos', '#8a7f6b'],
-  ['pendentes', 'Pendentes e cancelados', '#b08a4a'],
-  ['falhas', 'Senhas erradas', '#a86b6b'],
-];
-const SECOES = [
-  ['sistema', 'Monitor do sistema', 'Servidor ao vivo: carga, CPU, memória, banco de dados e IPs.', [['tb-sis-ips', 'Pedidos por IP (último minuto)']]],
-  ['clientes', 'Clientes e planos', 'Quem está em teste ou pagando, dias restantes, bloqueio e motivo. Toque em Gerenciar para agir.', [['tb-clientes', '']]],
-  ['acessos', 'Acessos de hoje', 'Aparelho, usuário, IP e tudo o que o app enviou em cada acesso.', [['tb-acessos', '']]],
-  ['aparelhos', 'Aparelhos conectados', 'Aparelhos que sincronizaram, com dados do cliente, plano e bloqueio.', [['tb-aparelhos', '']]],
-  ['aprovados', 'Pagamentos aprovados hoje', 'Quantidade, valores e o que foi vendido em cada pagamento.', [['tb-aprovados-grupo', 'Por brinquedo / descrição'], ['tb-aprovados', 'Pagamentos']]],
-  ['recebido', 'Recebimentos hoje', 'Total de ganhos do dia, quantidade e detalhes.', [['tb-recebido-metodo', 'Por método de pagamento'], ['tb-recebido', 'Pagamentos']]],
-  ['total', 'Recebimentos total', 'Escolha o período para ver o total recebido.', [['tb-total-dia', 'Por dia'], ['tb-total', 'Pagamentos']]],
-  ['ultimos', 'Últimos acessos', 'Aparelho e e-mail de quem acessou por último.', [['tb-ultimos', '']]],
-  ['pendentes', 'Pagamentos pendentes e cancelados', 'Pagamentos gerados que não foram pagos, estão pendentes ou foram cancelados.', [['tb-pendentes', '']]],
-  ['falhas', 'Tentativas com senha errada', 'Quem errou a senha: quando, qual usuário, aparelho e IP.', [['tb-falhas', '']]],
-];
-
-function montarEstrutura() {
-  $('cards').innerHTML = CARDS.map(([id, rot, cor]) => `
-    <button class="card" type="button" data-view="${id}" style="--c:${cor}">
-      <div class="r">${rot}</div>
-      <div class="n" id="c-${id}">—</div>
-      <div class="nota" id="cn-${id}"></div>
-    </button>`).join('');
-  $('cards').querySelectorAll('.card').forEach((b) => b.addEventListener('click', () => selecionar(b.dataset.view)));
-
-  $('secoes').innerHTML = SECOES.map(([id, t, s, tabs]) => `
-    <div class="secao" id="v-${id}">
-      <h2>${t}</h2>
-      <p class="sub">${s}</p>
-      <p class="nota-sec" id="nt-${id}"></p>
-      <div class="tabs" id="t-${id}"></div>
-      <div class="resumo" id="r-${id}"></div>
-      ${tabs.map(([tid, tt]) => `${tt ? `<h3>${tt}</h3>` : ''}<div class="rolagem"><table id="${tid}"></table></div>`).join('')}
-    </div>`).join('');
-  montarSistema();
+function inicioDoPeriodo(p) {
+  if (p === 'tudo') return new Date(0).toISOString();
+  const b = new Date(Date.now() - 3 * 3600e3);
+  const y = b.getUTCFullYear(), m = b.getUTCMonth();
+  let d = b.getUTCDate();
+  if (p === 'semana') d -= (b.getUTCDay() + 6) % 7;
+  else if (p === 'mes') d = 1;
+  return new Date(Date.UTC(y, m, d) + 3 * 3600e3).toISOString();
 }
 
-function tabela(id, cols, rows) {
-  const t = $(id);
-  t.replaceChildren();
-  const thead = document.createElement('thead');
-  const htr = document.createElement('tr');
-  cols.forEach((c) => { const th = document.createElement('th'); th.textContent = c.t; htr.appendChild(th); });
-  thead.appendChild(htr);
-  const tb = document.createElement('tbody');
-  if (!rows.length) {
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = cols.length; td.className = 'vazio'; td.textContent = 'Sem dados';
-    tr.appendChild(td); tb.appendChild(tr);
-  } else {
-    rows.forEach((r) => {
-      const tr = document.createElement('tr');
-      cols.forEach((c) => {
-        const td = document.createElement('td');
-        td.dataset.label = c.t;
-        if (c.c) td.className = c.c;
-        const v = c.f(r);
-        if (v instanceof Node) td.appendChild(v);
-        else td.textContent = (v === null || v === undefined || v === '') ? '—' : v;
-        tr.appendChild(td);
-      });
-      tb.appendChild(tr);
-    });
-  }
-  t.append(thead, tb);
-}
-function tag(par, bruto) {
-  const [rotulo, classe] = par || [bruto, ''];
-  const sp = document.createElement('span');
-  sp.className = 'tag ' + classe;
-  sp.textContent = rotulo ?? '—';
-  return sp;
-}
-function stats(id, itens) {
-  $(id).replaceChildren(...itens.map(([l, v]) => {
-    const d = document.createElement('div'); d.className = 'stat';
-    const a = document.createElement('div'); a.className = 'l'; a.textContent = l;
-    const b = document.createElement('div'); b.className = 'v'; b.textContent = v;
-    d.append(a, b); return d;
-  }));
-}
-function tabs(id, chaveFiltro, opcoes) {
-  $(id).replaceChildren(...opcoes.map(([v, l]) => {
-    const b = document.createElement('button');
-    b.type = 'button'; b.textContent = l;
-    if (filtro[chaveFiltro] === v) b.className = 'ativo';
-    b.addEventListener('click', () => { filtro[chaveFiltro] = v; renderTudo(); });
-    return b;
-  }));
-}
-function nota(id, texto) {
-  const el = $('nt-' + id);
-  el.textContent = texto || '';
-  el.style.display = texto ? 'block' : 'none';
-}
-function card(id, valor, sub) {
-  $('c-' + id).textContent = valor;
-  $('cn-' + id).textContent = sub || '';
-}
-function extras(o, conhecidos) {
-  const chaves = Object.keys(o || {}).filter((k) => !conhecidos.includes(k) && o[k] !== null && o[k] !== undefined && o[k] !== '');
-  if (!chaves.length) return '—';
-  const box = document.createElement('div');
-  chaves.forEach((k) => {
-    let v = o[k];
-    if (typeof v === 'object') v = JSON.stringify(v);
-    v = String(v);
-    if (v.length > 90) v = v.slice(0, 90) + '…';
-    const linha = document.createElement('div');
-    const kk = document.createElement('span'); kk.className = 'k'; kk.textContent = k + ': ';
-    linha.append(kk, document.createTextNode(v));
-    box.appendChild(linha);
-  });
-  return box;
-}
-function mono(texto) {
-  const sp = document.createElement('span');
-  sp.className = 'mono';
-  sp.textContent = texto || '—';
-  return sp;
-}
+const registrarHistorico = (device_id, acao, dias, motivo) =>
+  db.from('historico_admin').insert({ device_id, acao, dias: dias || null, motivo: motivo || null })
+    .then((r) => { if (r?.error) console.error('[historico_admin]', r.error.message); }, () => {});
 
-function inicioPeriodo(p) {
-  const h = new Date();
-  h.setHours(0, 0, 0, 0);
-  if (p === 'semana') h.setDate(h.getDate() - ((h.getDay() + 6) % 7));
-  else if (p === 'mes') h.setDate(1);
-  return h;
-}
-function noPeriodo(v, p) {
-  if (!v) return false;
-  const d = new Date(v);
-  return !isNaN(d) && d >= inicioPeriodo(p);
-}
-function diaKey(v) {
-  const d = new Date(v);
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-}
-function agrupar(arr, chaveFn) {
-  const m = new Map();
-  arr.forEach((x) => {
-    const k = chaveFn(x);
-    const g = m.get(k) || { k, qtd: 0, total: 0 };
-    g.qtd += 1; g.total += num(x.valor);
-    m.set(k, g);
-  });
-  return [...m.values()];
-}
-const somar = (arr) => arr.reduce((s, p) => s + num(p.valor), 0);
-const ordenar = (arr) => [...arr].sort((a, b) => new Date(b.criado_em) - new Date(a.criado_em));
-const itemNome = (p) => p.brinquedo || p.item || p.titulo || p.nome || p.descricao || 'Sem descrição';
-const aprovadosEm = (p) => dados.pagamentos.filter((x) => x.status === 'approved' && noPeriodo(x.criado_em, p));
-const acessosDoDia = () => dados.acessos.filter((a) => noPeriodo(a.criado_em, 'hoje'));
+const diasAte = (iso) => (iso ? Math.ceil((new Date(iso).getTime() - Date.now()) / DIA_MS) : null);
 
-const K_ACESSO = ['criado_em', 'evento', 'usuario', 'device_id', 'versao', 'ip'];
-const K_PAG = ['criado_em', 'valor', 'metodo', 'status', 'device_id', 'descricao', 'brinquedo', 'item', 'titulo', 'nome'];
-const K_APARELHO = ['device_id', 'versao', 'atualizado_em', 'usuario', 'email', 'telefone', 'bloqueado', 'teste_vencido', 'dias_restantes', 'online', 'ultimo_uso', 'fase', 'vence_em', 'liberado', 'motivo_bloqueio', 'bloqueado_em', 'criado_em', 'teste_fim', 'pago_ate', 'dias_teste', 'dias_pago'];
+const ACOES = ['bloquear', 'desbloquear', 'dar_teste', 'dar_pago', 'encerrar_teste', 'encerrar_pago', 'liberar_total', 'remover_liberacao'];
 
-function renderAcessos() {
-  const r = dados.resumo || {};
-  const hoje = acessosDoDia();
-  const aps = new Set(hoje.map((a) => a.device_id).filter(Boolean));
-  const us = new Set(hoje.map((a) => a.usuario).filter(Boolean));
-  const total = r.acessos_hoje ?? hoje.length;
-  card('acessos', total, 'hoje');
-  stats('r-acessos', [['Acessos hoje', total], ['Aparelhos diferentes', aps.size], ['Usuários diferentes', us.size], ['Senhas erradas', r.falhas_login_hoje ?? '—']]);
-  nota('acessos', total > hoje.length ? `Mostrando ${hoje.length} de ${total} acessos (limite de registros que o servidor envia).` : '');
-  tabela('tb-acessos', [
-    { t: 'Quando', f: (a) => quando(a.criado_em) },
-    { t: 'Evento', f: (a) => tag(EVENTOS[a.evento], a.evento) },
-    { t: 'Usuário', f: (a) => a.usuario },
-    { t: 'Aparelho', f: (a) => mono(a.device_id) },
-    { t: 'Versão', f: (a) => a.versao },
-    { t: 'IP', f: (a) => mono(a.ip) },
-    { t: 'Detalhes', c: 'desc', f: (a) => extras(a, K_ACESSO) },
-  ], hoje);
-}
-
-function planoTexto(a) {
-  if (!a.fase) {
-    return a.dias_restantes === null || a.dias_restantes === undefined
-      ? 'Liberado'
-      : (a.dias_restantes + (a.dias_restantes === 1 ? ' dia' : ' dias'));
-  }
-  if (a.fase === 'liberado') return 'Liberado';
-  const d = a.vence_em ? new Date(a.vence_em).toLocaleDateString('pt-BR') : '—';
-  return (a.fase === 'assinatura' ? 'Mensalidade até ' : 'Teste até ') + d;
-}
-
-function renderAparelhos() {
-  const r = dados.resumo || {};
-  const todos = dados.aparelhos;
-  const lista = filtro.aparelhos === 'hoje' ? todos.filter((a) => noPeriodo(a.atualizado_em, 'hoje')) : todos;
-  const online = todos.filter((a) => a.online).length;
-  card('aparelhos', r.aparelhos_24h ?? lista.length, online + ' online agora');
-  tabs('t-aparelhos', 'aparelhos', [['hoje', 'Hoje'], ['todos', 'Todos']]);
-  stats('r-aparelhos', [['Online agora', online], ['Conectados (24 h)', r.aparelhos_24h ?? '—'], ['Na lista', lista.length], ['Registrados', todos.length]]);
-
-  tabela('tb-aparelhos', [
-    { t: 'Aparelho (ID)', f: (a) => mono(a.device_id) },
-    { t: 'Usuário', f: (a) => a.usuario || '—' },
-    { t: 'E-mail', f: (a) => a.email || '—' },
-    { t: 'Telefone', f: (a) => a.telefone || '—' },
-    { t: 'Versão', f: (a) => a.versao },
-    { t: 'Última sinc.', f: (a) => quando(a.atualizado_em) },
-    { t: 'Online', f: (a) => tag(a.online ? ['Online', 'ok'] : ['Offline', '']) },
-    { t: 'Visto por último', f: (a) => quando(a.ultimo_uso) },
-    { t: 'Plano', f: planoTexto },
-    { t: 'Status', f: (a) => {
-        if (a.teste_vencido && a.bloqueado) return tag([a.fase === 'assinatura' ? 'Mensalidade vencida' : 'Teste vencido', 'ruim']);
-        return tag([a.bloqueado ? 'Bloqueado' : 'Ativo', a.bloqueado ? 'ruim' : 'ok']);
-    } },
-    { t: 'Ações', f: (a) => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'mini ' + (a.bloqueado ? 'verde' : 'vermelho');
-        btn.textContent = a.bloqueado ? 'Liberar' : 'Bloquear';
-        btn.addEventListener('click', async () => {
-          const nome = a.usuario || a.device_id;
-          let motivo = '';
-          if (!a.bloqueado) {
-            const m = prompt(`Motivo do bloqueio de ${nome}:`);
-            if (m === null) return;
-            motivo = m.trim();
-            if (!motivo) return alert('Informe o motivo do bloqueio.');
-          } else if (!confirm(`Tem certeza que deseja liberar o aparelho de ${nome}?`)) return;
-          btn.disabled = true;
-          try {
-            await api('/api/monitor/bloquear', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ device_id: a.device_id, bloquear: !a.bloqueado, motivo }),
-            });
-            await atualizar();
-          } catch (e) {
-            btn.disabled = false;
-            alert('Erro: ' + e.message);
-          }
-        });
-        return btn;
-    } },
-    { t: 'Detalhes', c: 'desc', f: (a) => extras(a, K_APARELHO) },
-  ], lista);
-}
-
-const nomeCliente = (a) => (a.usuario && a.usuario !== 'Sem nome' ? a.usuario : '') || (a.email && a.email !== 'Sem email' ? a.email : '') || a.device_id;
-const contatoCliente = (a) => [a.email, a.telefone].filter((x) => x && !/^Sem /.test(x)).join(' · ');
-
-function diasTexto(d) {
-  if (d === null || d === undefined) return '—';
-  if (d < 0) return `venceu há ${-d} ${-d === 1 ? 'dia' : 'dias'}`;
-  if (d === 0) return 'vence hoje';
-  return `${d} ${d === 1 ? 'dia' : 'dias'}`;
-}
-function classeDias(d) {
-  if (d === null || d === undefined) return '';
-  return d < 0 ? 'ruim' : d <= 3 ? 'meio' : 'ok';
-}
-function celulaDias(d, data) {
-  const box = document.createElement('div');
-  const t = document.createElement('div');
-  t.className = classeDias(d);
-  t.textContent = diasTexto(d);
-  box.appendChild(t);
-  if (data) {
-    const s = document.createElement('div');
-    s.className = 'k';
-    s.textContent = 'até ' + dataCurta(data);
-    box.appendChild(s);
-  }
-  return box;
-}
-function statusCliente(a) {
-  if (a.bloqueado) return ['Bloqueado', 'ruim'];
-  if (a.teste_vencido) return [a.fase === 'assinatura' ? 'Mensalidade vencida' : 'Teste vencido', 'ruim'];
-  if (a.liberado) return ['Liberado', 'ok'];
-  return ['Ativo', 'ok'];
-}
-function motivoCliente(a) {
-  if (a.bloqueado) return a.motivo_bloqueio || 'Sem motivo registrado';
-  if (a.teste_vencido) return a.fase === 'assinatura' ? 'Mensalidade vencida (bloqueio automático)' : 'Teste vencido (bloqueio automático)';
-  return '—';
-}
-function faseCliente(a) {
-  if (a.liberado) return ['Liberado', 'ok'];
-  if (a.fase === 'assinatura') return ['Pagando', 'ok'];
-  return ['Teste', 'meio'];
-}
-
-function fecharDialogo() { $('dlg').close(); }
-
-function linhaInfo(l, v) {
-  const d = document.createElement('div');
-  const a = document.createElement('span'); a.textContent = l;
-  const b = document.createElement('span');
-  if (v instanceof Node) b.appendChild(v); else b.textContent = v || '—';
-  d.append(a, b);
-  return d;
-}
-
-async function executarAcao(a, acao) {
-  const dias = parseInt($('dlg-dias').value, 10) || 0;
-  const motivo = $('dlg-motivo').value.trim();
-  const nome = nomeCliente(a);
-  if ((acao === 'dar_teste' || acao === 'dar_pago') && !(dias > 0)) return alert('Informe a quantidade de dias (maior que zero).');
-  if (acao === 'bloquear' && !motivo) return alert('Informe o motivo do bloqueio.');
-  const textos = {
-    bloquear: `Bloquear ${nome}?`,
-    desbloquear: `Desbloquear ${nome}?`,
-    dar_teste: `Dar ${dias} dia(s) de TESTE para ${nome}?`,
-    dar_pago: `Dar ${dias} dia(s) de PAGAMENTO para ${nome}?`,
-    encerrar_teste: `Encerrar o teste de ${nome} agora?`,
-    encerrar_pago: `Encerrar o pagamento de ${nome} agora?`,
-    liberar_total: `Liberar ${nome} sem limite de tempo?`,
-    remover_liberacao: `Remover a liberação sem limite de ${nome}?`,
-  };
-  if (!confirm(textos[acao])) return;
-  document.querySelectorAll('#dlg button').forEach((b) => { b.disabled = true; });
-  try {
-    await api('/api/monitor/cliente/acao', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ device_id: a.device_id, acao, dias, motivo }),
-    });
-    await atualizar();
-    const novo = dados.aparelhos.find((x) => x.device_id === a.device_id);
-    if (novo) abrirCliente(novo); else fecharDialogo();
-  } catch (e) {
-    document.querySelectorAll('#dlg button').forEach((b) => { b.disabled = false; });
-    alert('Erro: ' + e.message);
-  }
-}
-
-async function carregarHistorico(a, box) {
-  try {
-    const h = await api(`/api/monitor/cliente/${a.device_id}/historico`);
-    if (!h.length) { box.textContent = 'Nenhuma ação registrada.'; return; }
-    box.replaceChildren(...h.map((x) => {
-      const d = document.createElement('div');
-      const partes = [quando(x.criado_em), ACOES_HIST[x.acao] || x.acao];
-      if (x.dias) partes.push(x.dias + ' dia(s)');
-      if (x.motivo) partes.push('Motivo: ' + x.motivo);
-      d.textContent = partes.join(' · ');
-      return d;
-    }));
-  } catch (e) {
-    box.textContent = 'Não foi possível carregar o histórico.';
-  }
-}
-
-function abrirCliente(a) {
-  const dlg = $('dlg');
-  const raiz = document.createElement('div');
-  raiz.className = 'dlg';
-
-  const titulo = document.createElement('h2');
-  titulo.textContent = nomeCliente(a);
-  const contato = document.createElement('div');
-  contato.className = 'sub';
-  contato.textContent = contatoCliente(a) || 'Sem contato';
-
-  const info = document.createElement('div');
-  info.className = 'info';
-  info.append(
-    linhaInfo('Status', tag(statusCliente(a))),
-    linhaInfo('Fase', tag(faseCliente(a))),
-    linhaInfo('Teste', a.teste_fim ? `${diasTexto(a.dias_teste)} (até ${dataCurta(a.teste_fim)})` : '—'),
-    linhaInfo('Pagamento', a.pago_ate ? `${diasTexto(a.dias_pago)} (até ${dataCurta(a.pago_ate)})` : 'Sem pagamento'),
-    linhaInfo('Cadastro', dataCurta(a.criado_em)),
-    linhaInfo('Visto por último', quando(a.ultimo_uso)),
-    linhaInfo('Motivo do bloqueio', motivoCliente(a)),
-  );
-  if (a.bloqueado && a.bloqueado_em) info.append(linhaInfo('Bloqueado em', quando(a.bloqueado_em)));
-
-  const campos = document.createElement('div');
-  campos.className = 'campos';
-  const lDias = document.createElement('label');
-  lDias.textContent = 'Dias';
-  const iDias = document.createElement('input');
-  iDias.id = 'dlg-dias'; iDias.type = 'number'; iDias.min = '1'; iDias.max = '3650'; iDias.value = '7';
-  lDias.appendChild(iDias);
-  const lMot = document.createElement('label');
-  lMot.textContent = 'Motivo (obrigatório para bloquear)';
-  const iMot = document.createElement('input');
-  iMot.id = 'dlg-motivo'; iMot.type = 'text'; iMot.maxLength = 300; iMot.placeholder = 'Ex.: pagamento não identificado';
-  lMot.appendChild(iMot);
-  campos.append(lDias, lMot);
-
-  const b = (txt, cls, acao) => {
-    const x = document.createElement('button');
-    x.type = 'button'; x.className = cls; x.textContent = txt;
-    x.addEventListener('click', () => executarAcao(a, acao));
-    return x;
-  };
-  const dias = document.createElement('div');
-  dias.className = 'grade';
-  dias.append(b('+ Dias de teste', '', 'dar_teste'), b('+ Dias pagos', '', 'dar_pago'), b('Encerrar teste', 'sec', 'encerrar_teste'), b('Encerrar pagamento', 'sec', 'encerrar_pago'));
-  const acesso = document.createElement('div');
-  acesso.className = 'grade';
-  acesso.append(
-    a.bloqueado ? b('Desbloquear', 'mini verde', 'desbloquear') : b('Bloquear', 'mini vermelho', 'bloquear'),
-    a.liberado ? b('Remover liberação sem limite', 'sec', 'remover_liberacao') : b('Liberar sem limite', 'sec', 'liberar_total'),
-  );
-  acesso.querySelectorAll('button.mini').forEach((x) => { x.style.padding = '8px 14px'; x.style.fontSize = '13px'; x.style.borderRadius = '8px'; });
-
-  const th = document.createElement('h3');
-  th.textContent = 'Histórico de ações';
-  th.style.margin = '4px 0 0';
-  const hist = document.createElement('div');
-  hist.className = 'hist';
-  hist.textContent = 'Carregando…';
-
-  const fim = document.createElement('div');
-  fim.className = 'fim';
-  const fechar = document.createElement('button');
-  fechar.type = 'button'; fechar.className = 'sec'; fechar.textContent = 'Fechar';
-  fechar.addEventListener('click', fecharDialogo);
-  fim.appendChild(fechar);
-
-  raiz.append(titulo, contato, info, campos, dias, acesso, th, hist, fim);
-  dlg.replaceChildren(raiz);
-  if (!dlg.open) dlg.showModal();
-  carregarHistorico(a, hist);
-}
-
-function renderClientes() {
-  const todos = [...dados.aparelhos].sort((x, y) => {
-    const dx = Math.min(x.dias_teste ?? 1e9, x.dias_pago ?? 1e9);
-    const dy = Math.min(y.dias_teste ?? 1e9, y.dias_pago ?? 1e9);
-    return dx - dy;
-  });
-  const G = {
-    teste: todos.filter((a) => !a.liberado && a.fase === 'teste' && !a.teste_vencido),
-    pago: todos.filter((a) => !a.liberado && a.fase === 'assinatura' && !a.teste_vencido),
-    bloqueados: todos.filter((a) => a.bloqueado),
-    vencidos: todos.filter((a) => a.teste_vencido),
-    liberados: todos.filter((a) => a.liberado),
-  };
-  const lista = filtro.clientes === 'todos' ? todos : G[filtro.clientes] || todos;
-  card('clientes', todos.length, `${G.teste.length} teste · ${G.pago.length} pagando · ${G.bloqueados.length} bloqueados`);
-  tabs('t-clientes', 'clientes', [['todos', 'Todos'], ['teste', 'Em teste'], ['pago', 'Pagando'], ['vencidos', 'Vencidos'], ['bloqueados', 'Bloqueados'], ['liberados', 'Liberados']]);
-  stats('r-clientes', [['Em teste', G.teste.length], ['Pagando', G.pago.length], ['Vencidos', G.vencidos.length], ['Bloqueados', G.bloqueados.length], ['Liberados', G.liberados.length]]);
-
-  tabela('tb-clientes', [
-    { t: 'Cliente', f: (a) => nomeCliente(a) },
-    { t: 'Contato', c: 'desc', f: (a) => contatoCliente(a) },
-    { t: 'Fase', f: (a) => tag(faseCliente(a)) },
-    { t: 'Teste', f: (a) => celulaDias(a.dias_teste, a.teste_fim) },
-    { t: 'Pagamento', f: (a) => a.pago_ate ? celulaDias(a.dias_pago, a.pago_ate) : '—' },
-    { t: 'Status', f: (a) => tag(statusCliente(a)) },
-    { t: 'Motivo', c: 'desc', f: (a) => motivoCliente(a) },
-    { t: 'Ações', f: (a) => {
-        const x = document.createElement('button');
-        x.type = 'button'; x.className = 'mini cinza'; x.textContent = 'Gerenciar';
-        x.addEventListener('click', () => abrirCliente(a));
-        return x;
-    } },
-  ], lista);
-}
-
-function colunasPagamento(comStatus) {
-  const cols = [
-    { t: 'Quando', f: (p) => quando(p.criado_em) },
-    { t: 'Brinquedo / descrição', c: 'desc', f: (p) => itemNome(p) },
-    { t: 'Valor', f: (p) => brl(p.valor) },
-    { t: 'Método', f: (p) => p.metodo },
-  ];
-  if (comStatus) cols.push({ t: 'Status', f: (p) => tag(STATUS[p.status], p.status) });
-  cols.push({ t: 'Aparelho', f: (p) => mono(p.device_id) });
-  cols.push({ t: 'Detalhes', c: 'desc', f: (p) => extras(p, K_PAG) });
-  return cols;
-}
-
-function renderAprovados() {
-  const r = dados.resumo || {};
-  const ap = ordenar(aprovadosEm('hoje'));
-  const soma = somar(ap);
-  const qtd = r.pagamentos_aprovados_hoje ?? ap.length;
-  card('aprovados', qtd, ap.length ? brl(soma) : '');
-  stats('r-aprovados', [['Pagamentos aprovados', qtd], ['Valor total', brl(soma)], ['Ticket médio', ap.length ? brl(soma / ap.length) : '—']]);
-  tabela('tb-aprovados-grupo', [
-    { t: 'Brinquedo / descrição', c: 'desc', f: (g) => g.k },
-    { t: 'Quantidade', f: (g) => g.qtd },
-    { t: 'Total', f: (g) => brl(g.total) },
-  ], agrupar(ap, itemNome).sort((a, b) => b.total - a.total));
-  tabela('tb-aprovados', colunasPagamento(false), ap);
-}
-
-function renderRecebido() {
-  const r = dados.resumo || {};
-  const ap = ordenar(aprovadosEm('hoje'));
-  const soma = somar(ap);
-  const total = r.valor_aprovado_hoje ?? soma;
-  card('recebido', brl(total), ap.length + (ap.length === 1 ? ' pagamento' : ' pagamentos'));
-  stats('r-recebido', [
-    ['Total de ganhos hoje', brl(total)],
-    ['Pagamentos', ap.length],
-    ['Ticket médio', ap.length ? brl(soma / ap.length) : '—'],
-    ['Maior pagamento', ap.length ? brl(Math.max(...ap.map((p) => num(p.valor)))) : '—'],
-  ]);
-  tabela('tb-recebido-metodo', [
-    { t: 'Método', f: (g) => g.k },
-    { t: 'Quantidade', f: (g) => g.qtd },
-    { t: 'Total', f: (g) => brl(g.total) },
-  ], agrupar(ap, (p) => p.metodo || '—').sort((a, b) => b.total - a.total));
-  tabela('tb-recebido', colunasPagamento(false), ap);
-}
-
-function renderTotal() {
-  const p = filtro.total;
-  const ap = ordenar(aprovadosEm(p));
-  const soma = somar(ap);
-  card('total', brl(somar(aprovadosEm('mes'))), 'neste mês');
-  tabs('t-total', 'total', [['hoje', 'Hoje'], ['semana', 'Esta semana'], ['mes', 'Este mês']]);
-  stats('r-total', [
-    ['Total recebido', brl(soma)],
-    ['Pagamentos', ap.length],
-    ['Ticket médio', ap.length ? brl(soma / ap.length) : '—'],
-    ['Desde', inicioPeriodo(p).toLocaleDateString('pt-BR')],
-  ]);
-  nota('total', 'Considera os pagamentos que o servidor envia ao painel. Se a lista for limitada, períodos longos podem ficar incompletos.');
-  tabela('tb-total-dia', [
-    { t: 'Dia', f: (g) => g.k.split('-').reverse().join('/') },
-    { t: 'Quantidade', f: (g) => g.qtd },
-    { t: 'Total', f: (g) => brl(g.total) },
-  ], agrupar(ap, (x) => diaKey(x.criado_em)).sort((a, b) => (a.k < b.k ? 1 : -1)));
-  tabela('tb-total', colunasPagamento(false), ap);
-}
-
-function renderUltimos() {
-  card('ultimos', dados.acessos.length, 'registros recentes');
-  tabela('tb-ultimos', [
-    { t: 'Quando', f: (a) => quando(a.criado_em) },
-    { t: 'Aparelho', f: (a) => mono(a.device_id) },
-    { t: 'E-mail / usuário', f: (a) => a.email || a.usuario },
-    { t: 'Evento', f: (a) => tag(EVENTOS[a.evento], a.evento) },
-    { t: 'IP', f: (a) => mono(a.ip) },
-  ], dados.acessos);
-}
-
-function renderPendentes() {
-  const naoPagos = ordenar(dados.pagamentos.filter((p) => p.status !== 'approved'));
-  const grupo = (g) => naoPagos.filter((p) => GRUPOS[g].includes(p.status));
-  const pend = grupo('pendentes'), canc = grupo('cancelados'), est = grupo('estornados');
-  card('pendentes', pend.length + canc.length, `${pend.length} pendentes · ${canc.length} cancelados`);
-  tabs('t-pendentes', 'pendentes', [['todos', 'Todos'], ['pendentes', 'Pendentes'], ['cancelados', 'Cancelados / recusados'], ['estornados', 'Estornados']]);
-  stats('r-pendentes', [
-    ['Pendentes (não pagos)', `${pend.length} · ${brl(somar(pend))}`],
-    ['Cancelados / recusados', `${canc.length} · ${brl(somar(canc))}`],
-    ['Estornados', `${est.length} · ${brl(somar(est))}`],
-  ]);
-  tabela('tb-pendentes', colunasPagamento(true), filtro.pendentes === 'todos' ? naoPagos : grupo(filtro.pendentes));
-}
-
-function renderFalhas() {
-  const r = dados.resumo || {};
-  const falhas = dados.acessos.filter((a) => a.evento === 'falha_login');
-  card('falhas', r.falhas_login_hoje ?? falhas.length, 'hoje');
-  stats('r-falhas', [['Hoje', r.falhas_login_hoje ?? '—'], ['Na lista', falhas.length]]);
-  tabela('tb-falhas', [
-    { t: 'Quando', f: (a) => quando(a.criado_em) },
-    { t: 'Usuário', f: (a) => a.usuario },
-    { t: 'Aparelho', f: (a) => mono(a.device_id) },
-    { t: 'IP', f: (a) => mono(a.ip) },
-    { t: 'Versão', f: (a) => a.versao },
-    { t: 'Detalhes', c: 'desc', f: (a) => extras(a, K_ACESSO) },
-  ], falhas);
-}
-
-let sis = null;
-let serieGraf = 'carga';
-let timerSis = null;
-let tickSis = 0;
-
-const COR_OK = '#2f9e5b', COR_ATENCAO = '#c98a12', COR_CRITICO = '#c0392b';
-const NIVEIS = { ok: ['SISTEMA OK', COR_OK, '✔', ''], atencao: ['ATENÇÃO', COR_ATENCAO, '!', 'atencao'], critico: ['CRÍTICO', COR_CRITICO, '✖', 'critico'] };
-const METRICAS = [['carga', 'Carga de pedidos'], ['cpu', 'CPU'], ['ram', 'Memória RAM'], ['banco', 'Banco de dados (latência)'], ['ips', 'IPs ativos (1 min)'], ['resp', 'Tempo de resposta (p95)']];
-const SERIES = { carga: ['Carga de pedidos (%)', '#d97706'], cpu: ['CPU (%)', '#2563eb'], ram: ['Memória (%)', '#7c3aed'] };
-
-const corPct = (v, aten, crit) => (v >= crit ? COR_CRITICO : v >= aten ? COR_ATENCAO : COR_OK);
-const fmtPct = (v) => (Math.round(num(v) * 10) / 10).toString().replace('.', ',') + '%';
-function fmtDur(ms) {
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return s + ' s';
-  if (s < 86400) return Math.floor(s / 60) + ' min ' + (s % 60) + ' s';
-  return Math.floor(s / 86400) + ' d ' + Math.floor((s % 86400) / 3600) + ' h';
-}
-
-function montarSistema() {
-  const h3 = $('tb-sis-ips').closest('.rolagem').previousElementSibling;
-  h3.insertAdjacentHTML('beforebegin', `
-    <div class="banner sem" id="sis-banner">
-      <span class="ic" id="sis-ic">…</span>
-      <div><div class="tx" id="sis-tx">Carregando…</div><ul id="sis-motivos"></ul><div class="sub2" id="sis-sub"></div></div>
-    </div>
-    <div class="metricas">
-      ${METRICAS.map(([id, rot]) => `
-        <div class="metrica" id="m-${id}">
-          <div class="r">${rot}</div><div class="n" id="mn-${id}">—</div>
-          <div class="barra"><i id="mb-${id}"></i></div><div class="nota" id="mt-${id}"></div>
-        </div>`).join('')}
-    </div>
-    <h3>Ao longo do tempo (últimos 15 minutos)</h3>
-    <div class="grafico"><div class="tabs" id="sis-abas"></div><div id="sis-grafico"></div></div>`);
-  $('sis-abas').replaceChildren(...Object.entries(SERIES).map(([k, [rot]]) => {
-    const b = document.createElement('button');
-    b.type = 'button'; b.textContent = rot.replace(/ \(.*\)/, ''); b.dataset.k = k;
-    b.addEventListener('click', () => { serieGraf = k; desenharGrafico(); });
-    return b;
-  }));
-}
-
-function metrica(id, valor, pct, cor, nota) {
-  const el = $('m-' + id);
-  el.style.setProperty('--m', cor);
-  $('mn-' + id).textContent = valor;
-  $('mb-' + id).style.width = Math.max(0, Math.min(100, pct)) + '%';
-  $('mt-' + id).textContent = nota || '';
-}
-
-function svgEl(tag, attrs, texto) {
-  const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
-  Object.entries(attrs || {}).forEach(([k, v]) => e.setAttribute(k, v));
-  if (texto !== undefined) e.textContent = texto;
-  return e;
-}
-
-function desenharGrafico() {
-  document.querySelectorAll('#sis-abas button').forEach((b) => b.classList.toggle('ativo', b.dataset.k === serieGraf));
-  const box = $('sis-grafico');
-  const L = 38, R = 10, T = 10, B = 24, W = 700, H = 220;
-  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': SERIES[serieGraf][0] });
-  const y = (v) => T + (H - T - B) * (1 - v / 100);
-  [0, 33, 67, 100].forEach((v) => {
-    svg.appendChild(svgEl('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: '#e5e7eb', 'stroke-width': 1 }));
-    svg.appendChild(svgEl('text', { x: L - 6, y: y(v) + 4, 'text-anchor': 'end', 'font-size': 11, fill: '#6b7280' }, String(v)));
-  });
-  const fim = sis ? sis.agora : Date.now();
-  const ini = fim - 15 * 60000;
-  const x = (t) => L + ((t - ini) / (fim - ini)) * (W - L - R);
-  [['-15 min', ini], ['-10', fim - 10 * 60000], ['-5', fim - 5 * 60000], ['agora', fim]].forEach(([rot, t], i) => {
-    svg.appendChild(svgEl('text', { x: x(t), y: H - 6, 'text-anchor': i === 0 ? 'start' : i === 3 ? 'end' : 'middle', 'font-size': 11, fill: '#6b7280' }, rot));
-  });
-  const idx = { carga: 1, cpu: 2, ram: 3 }[serieGraf];
-  const pts = (sis ? sis.historico : []).filter((h) => h[0] >= ini).map((h) => `${x(h[0]).toFixed(1)},${y(Math.min(100, h[idx])).toFixed(1)}`);
-  if (pts.length > 1) svg.appendChild(svgEl('polyline', { points: pts.join(' '), fill: 'none', stroke: SERIES[serieGraf][1], 'stroke-width': 2.2, 'stroke-linejoin': 'round' }));
-  else if (pts.length === 1) { const [cx, cy] = pts[0].split(','); svg.appendChild(svgEl('circle', { cx, cy, r: 3, fill: SERIES[serieGraf][1] })); }
-  box.replaceChildren(svg);
-}
-
-function renderSistema(erro) {
-  const cardEl = document.querySelector('.card[data-view="sistema"]');
-  const banner = $('sis-banner');
-  if (!sis) {
-    banner.className = 'banner critico';
-    $('sis-ic').textContent = '✖';
-    $('sis-tx').textContent = 'SEM RESPOSTA';
-    $('sis-motivos').replaceChildren();
-    $('sis-sub').textContent = erro ? 'Não foi possível ler o servidor: ' + erro.message : '';
-    card('sistema', 'Sem resposta', '');
-    cardEl.style.setProperty('--c', COR_CRITICO);
-    $('c-sistema').style.color = COR_CRITICO;
-    return;
-  }
-  const [rot, cor, icone, classe] = NIVEIS[sis.status.nivel] || NIVEIS.ok;
-  banner.className = 'banner ' + (sis.coletando ? classe : 'sem');
-  $('sis-ic').textContent = sis.coletando ? icone : '?';
-  $('sis-tx').textContent = sis.coletando ? rot : 'COLETA DESLIGADA';
-  const motivos = sis.coletando
-    ? (sis.status.motivos.length ? sis.status.motivos : ['Tudo funcionando normalmente.'])
-    : ['Adicione sistema.iniciar(servidor) no server.js e reinicie o servidor.'];
-  $('sis-motivos').replaceChildren(...motivos.map((m) => { const li = document.createElement('li'); li.textContent = m; return li; }));
-  $('sis-sub').textContent = 'Ao vivo · ligado há ' + fmtDur(sis.ligadoMs) + ' · atualizado às ' + new Date(sis.agora).toLocaleTimeString('pt-BR');
-
-  const c = sis.carga, cp = sis.cpu, r = sis.ram, b = sis.banco, n = sis.rede;
-  metrica('carga', fmtPct(c.pct), c.pct, corPct(c.pct, 60, 90), `${c.reqMin} pedidos no último minuto · capacidade ${c.capacidade}/min`);
-  metrica('cpu', fmtPct(cp.pct), cp.pct, corPct(cp.pct, 70, 90), `${String(cp.nucleos).replace('.', ',')} núcleo(s) disponíveis`);
-  metrica('ram', r.usadoMb.toString().replace('.', ',') + ' MB', r.pct, corPct(r.pct, 80, 92), `${fmtPct(r.pct)} de ${r.limiteMb} MB`);
-  const semBanco = b.falhasSeguidas >= 2;
-  const corBanco = semBanco ? COR_CRITICO : b.falhasSeguidas === 1 ? COR_ATENCAO : b.mediana >= 3000 ? COR_CRITICO : b.mediana >= 1000 ? COR_ATENCAO : COR_OK;
-  metrica('banco', semBanco ? 'Sem resposta' : (b.mediana || b.ultimoMs) + ' ms', Math.min(100, ((b.mediana || b.ultimoMs) / 3000) * 100), corBanco,
-    `último teste ${b.ultimoMs} ms · pior dos últimos 5 min ${b.maximo} ms · ${b.gravacoes} gravações · ${b.fila} em andamento`);
-  metrica('ips', String(n.ips), Math.min(100, n.ips), COR_OK, `${n.aparelhos} aparelhos ativos no último minuto`);
-  const corResp = n.respP95Ms >= 2000 ? COR_CRITICO : n.respP95Ms >= 800 ? COR_ATENCAO : COR_OK;
-  metrica('resp', n.respP95Ms + ' ms', Math.min(100, (n.respP95Ms / 2000) * 100), corResp,
-    `${n.erros5xx} erros do servidor · ${n.limitados} barrados (429) no último minuto`);
-
-  tabela('tb-sis-ips', [
-    { t: 'IP', f: (i) => mono(i.ip) },
-    { t: 'Pedidos', f: (i) => i.pedidos },
-    { t: 'Unidades (aparelhos)', f: (i) => i.unidades },
-    { t: 'Nível', f: (i) => tag([i.nivel === 'normal' ? 'Normal' : i.nivel === 'alto' ? 'Alto' : 'Muito alto', i.nivel === 'normal' ? 'ok' : i.nivel === 'alto' ? 'meio' : 'ruim']) },
-  ], sis.ips);
-  desenharGrafico();
-
-  const textoCard = !sis.coletando ? 'Desligado' : sis.status.nivel === 'ok' ? 'OK' : sis.status.nivel === 'atencao' ? 'Atenção' : 'Crítico';
-  card('sistema', textoCard, `CPU ${fmtPct(cp.pct)} · RAM ${fmtPct(r.pct)} · Banco ${b.mediana || b.ultimoMs} ms`);
-  cardEl.style.setProperty('--c', sis.coletando ? cor : '#6b7280');
-  $('c-sistema').style.color = sis.coletando ? cor : '#6b7280';
-}
-
-async function tickSistema(forcar) {
-  tickSis += 1;
-  if (!forcar && (document.hidden || (viewAtual !== 'sistema' && tickSis % 4 !== 0))) return;
-  try {
-    sis = await api('/api/monitor/sistema');
-    renderSistema();
-  } catch (e) {
-    if (e.auth) return;
-    sis = null;
-    renderSistema(e);
-  }
-}
-
-function renderTudo() {
-  if (!dados.resumo) return;
-  [renderAcessos, renderAparelhos, renderClientes, renderAprovados, renderRecebido,
-   renderTotal, renderUltimos, renderPendentes, renderFalhas].forEach((fn) => {
-    try { fn(); } catch (e) { console.error('[painel]', fn.name, e); }
-  });
-}
-
-function selecionar(view) {
-  viewAtual = view;
-  document.querySelectorAll('.card').forEach((c) => c.classList.toggle('ativo', c.dataset.view === view));
-  document.querySelectorAll('.secao').forEach((s) => s.classList.toggle('visivel', s.id === 'v-' + view));
-  $('dica').style.display = view ? 'none' : 'block';
-  if (view) $('v-' + view).scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  if (view === 'sistema') tickSistema(true);
-}
-
-async function api(caminho, opcoes = {}) {
-  const r = await fetch(caminho, { ...opcoes, headers: { 'x-admin-token': token, ...(opcoes.headers || {}) } });
-  if (r.status === 401) throw Object.assign(new Error('Senha inválida.'), { auth: true });
-  if (!r.ok) {
-    const j = await r.json().catch(() => null);
-    throw new Error((j && j.erro) || 'Erro ' + r.status);
-  }
-  return r.json();
-}
-
-function infoAparelho() {
-  const ua = navigator.userAgent || '';
-  let so = 'Aparelho desconhecido';
-  if (/android/i.test(ua)) so = 'Android';
-  else if (/iphone|ipad|ipod/i.test(ua)) so = 'iPhone/iPad';
-  else if (/windows/i.test(ua)) so = 'Windows';
-  else if (/mac os/i.test(ua)) so = 'Mac';
-  else if (/linux/i.test(ua)) so = 'Linux';
-  let nav = 'navegador desconhecido';
-  if (/edg\//i.test(ua)) nav = 'Edge';
-  else if (/chrome|crios/i.test(ua)) nav = 'Chrome';
-  else if (/firefox|fxios/i.test(ua)) nav = 'Firefox';
-  else if (/safari/i.test(ua)) nav = 'Safari';
-  return `${so} · ${nav}`;
-}
-
-async function atualizar() {
-  try {
-    const [resumo, acessos, pagamentos, aparelhos] = await Promise.all([
-      api('/api/monitor/resumo'),
-      api('/api/monitor/acessos?limite=300'),
-      api('/api/monitor/pagamentos?limite=300'),
-      api('/api/monitor/aparelhos?limite=500'),
-    ]);
-    dados = { resumo, acessos, pagamentos, aparelhos };
-    renderTudo();
-    $('aviso').style.display = 'none';
-    $('estado').textContent = 'Atualizado às ' + new Date().toLocaleTimeString('pt-BR');
-    return true;
-  } catch (e) {
-    if (e.auth) {
-      sair('Senha inválida.\nAparelho: ' + infoAparelho() + '\nHorário: ' + new Date().toLocaleString('pt-BR') +
-        '\nA tentativa fica registrada no card "Senhas erradas".');
-      return false;
-    }
-    $('estado').textContent = 'Falha ao atualizar: ' + e.message;
-    $('aviso').textContent = 'Não foi possível atualizar agora. Os dados abaixo podem estar desatualizados.';
-    $('aviso').style.display = 'block';
-    return true;
-  }
-}
-
-async function reconciliarEAtualizar() {
-  const btn = $('atualizar');
-  btn.disabled = true;
-  try {
-    const r = await api('/api/monitor/reconciliar', { method: 'POST' });
-    if (r && r.atualizados) $('estado').textContent = `${r.atualizados} pagamento(s) atualizado(s)…`;
-  } catch (e) {
-    if (e.auth) { btn.disabled = false; return sair('Senha inválida.'); }
-  }
-  await atualizar();
-  btn.disabled = false;
-}
-
-function sair(msg) {
-  clearInterval(timer);
-  clearInterval(timerSis);
-  sessionStorage.removeItem(chave);
-  token = '';
-  if ($('dlg').open) $('dlg').close();
-  $('erro').textContent = msg || '';
-  $('entrada').style.display = 'flex';
-}
-
-async function iniciar() {
-  $('entrada').style.display = 'none';
-  selecionar(null);
-  if (await atualizar()) {
-    clearInterval(timer);
-    timer = setInterval(atualizar, 15000);
-    clearInterval(timerSis);
-    tickSis = 0;
-    tickSistema(true);
-    timerSis = setInterval(tickSistema, 3000);
-  }
-}
-
-$('form').addEventListener('submit', (ev) => {
-  ev.preventDefault();
-  token = $('token').value.trim();
-  sessionStorage.setItem(chave, token);
-  $('token').value = '';
-  $('erro').textContent = '';
-  iniciar();
+router.get('/monitor', (req, res) => {
+  res.set('X-Robots-Tag', 'noindex, nofollow');
+  res.sendFile(path.join(__dirname, '..', '..', 'public', 'monitor.html'));
 });
-$('sair').addEventListener('click', () => sair(''));
-$('atualizar').addEventListener('click', reconciliarEAtualizar);
-$('inicio').addEventListener('click', () => selecionar(null));
 
-document.querySelectorAll('img.logo').forEach((img) => { if (LOGO_SRC) img.src = LOGO_SRC; else img.onerror(); });
-montarEstrutura();
-if (token) iniciar();
-</script>
-</body>
-</html>
+const protegido = [limiteIp('mon', 60), requerAdmin];
+
+router.get(`${API}/sistema`, ...protegido, rota(async (req, res) => {
+  res.json(sistema.snapshot());
+}));
+
+router.get(`${API}/resumo`, ...protegido, rota(async (req, res) => {
+  const hoje = inicioDoPeriodo('hoje');
+  const h24 = new Date(Date.now() - 24 * 3600e3).toISOString();
+  const [acessosHoje, falhasHoje, falhasAdmin, aparelhos24h, aprovadosHoje, pagos] = await Promise.all([
+    contar(db.from('acessos').select('id', head).gte('criado_em', hoje)),
+    contar(db.from('acessos').select('id', head).gte('criado_em', hoje).eq('evento', 'falha_login')),
+    contar(db.from('falhas_admin').select('id', head).gte('criado_em', hoje)).catch(() => 0),
+    db.from('acessos').select('device_id').gte('criado_em', h24).limit(5000).then(exige),
+    contar(db.from('pagamentos').select('id', head).gte('criado_em', hoje).eq('status', 'approved')),
+    db.from('pagamentos').select('valor').gte('criado_em', hoje).eq('status', 'approved').limit(5000).then(exige),
+  ]);
+  res.json({
+    acessos_hoje: acessosHoje,
+    falhas_login_hoje: falhasHoje,
+    falhas_painel_hoje: falhasAdmin,
+    aparelhos_24h: new Set(aparelhos24h.map((a) => a.device_id)).size,
+    pagamentos_aprovados_hoje: aprovadosHoje,
+    valor_aprovado_hoje: somar(pagos, 'valor'),
+  });
+}));
+
+router.get(`${API}/financeiro`, ...protegido, rota(async (req, res) => {
+  const periodo = ['hoje', 'semana', 'mes', 'tudo'].includes(req.query.periodo) ? req.query.periodo : 'hoje';
+  const linhas = exige(await db.from('pagamentos').select('valor, taxa, status')
+    .gte('criado_em', inicioDoPeriodo(periodo)).limit(20000));
+  const ap = linhas.filter((l) => l.status === 'approved');
+  res.json({
+    periodo,
+    aprovados: ap.length,
+    valor_aprovado: somar(ap, 'valor'),
+    taxa_total: somar(ap, 'taxa'),
+    pendentes: linhas.filter((l) => ['pending', 'pendente', 'in_process'].includes(l.status)).length,
+    cancelados: linhas.filter((l) => ['cancelled', 'cancelado', 'rejected', 'expired'].includes(l.status)).length,
+    estornados: linhas.filter((l) => ['refunded', 'charged_back'].includes(l.status)).length,
+  });
+}));
+
+router.get(`${API}/clientes`, ...protegido, rota(async (req, res) => {
+  const [contas, bloqueados, aparelhos] = await Promise.all([
+    contar(db.from('mp_contas').select('device_id', head)),
+    contar(db.from('aparelhos').select('device_id', head).eq('bloqueado', true)),
+    contar(db.from('aparelhos').select('device_id', head)),
+  ]);
+  res.json({
+    contas_mercado_pago: contas, aparelhos_registrados: aparelhos, aparelhos_bloqueados: bloqueados,
+    em_teste_gratis: 0, pagando_taxa: contas,
+  });
+}));
+
+router.post(`${API}/bloquear`, limiteIp('mon', 30), requerAdmin, rota(async (req, res) => {
+  const id = req.body?.device_id;
+  if (!idValido(id)) throw falha(400, 'device_id inválido.');
+  const bloquear = !!req.body?.bloquear;
+  const motivo = String(req.body?.motivo || '').trim().slice(0, 300);
+  if (bloquear && !motivo) throw falha(400, 'Informe o motivo do bloqueio.');
+  exige(await db.from('aparelhos').update(bloquear
+    ? { bloqueado: true, motivo_bloqueio: motivo, bloqueado_em: new Date().toISOString() }
+    : { bloqueado: false, motivo_bloqueio: null, bloqueado_em: null }).eq('device_id', id));
+  cacheAp.delete(id);
+  registrarHistorico(id, bloquear ? 'bloquear' : 'desbloquear', 0, motivo);
+  res.json({ ok: true });
+}));
+
+router.post(`${API}/liberar`, limiteIp('mon', 30), requerAdmin, rota(async (req, res) => {
+  const id = req.body?.device_id;
+  if (!idValido(id)) throw falha(400, 'device_id inválido.');
+  exige(await db.from('aparelhos').update({ liberado: !!req.body?.liberar }).eq('device_id', id));
+  cacheAp.delete(id);
+  registrarHistorico(id, req.body?.liberar ? 'liberar_total' : 'remover_liberacao', 0, '');
+  res.json({ ok: true });
+}));
+
+router.post(`${API}/cliente/acao`, limiteIp('mon', 30), requerAdmin, rota(async (req, res) => {
+  const { device_id: id, acao } = req.body || {};
+  if (!idValido(id)) throw falha(400, 'device_id inválido.');
+  if (!ACOES.includes(acao)) throw falha(400, 'Ação inválida.');
+  const dias = Math.min(Math.max(parseInt(req.body?.dias, 10) || 0, 0), 3650);
+  const motivo = String(req.body?.motivo || '').trim().slice(0, 300);
+  if ((acao === 'dar_teste' || acao === 'dar_pago') && dias < 1) throw falha(400, 'Informe os dias (1 ou mais).');
+  if (acao === 'bloquear' && !motivo) throw falha(400, 'Informe o motivo do bloqueio.');
+
+  const ap = exige(await db.from('aparelhos')
+    .select('device_id, criado_em, pago_ate, teste_ate, liberado').eq('device_id', id).maybeSingle());
+  if (!ap) throw falha(404, 'Aparelho não encontrado.');
+
+  const agora = Date.now();
+  const info = infoTeste(ap);
+  const fimTeste = info.fimTeste ? new Date(info.fimTeste).getTime() : 0;
+  const pagoAte = ap.pago_ate ? new Date(ap.pago_ate).getTime() : 0;
+  const iso = (t) => new Date(t).toISOString();
+  let upd;
+
+  if (acao === 'bloquear') upd = { bloqueado: true, motivo_bloqueio: motivo, bloqueado_em: iso(agora) };
+  else if (acao === 'desbloquear') upd = { bloqueado: false, motivo_bloqueio: null, bloqueado_em: null };
+  else if (acao === 'dar_teste') upd = { teste_ate: iso(Math.max(agora, fimTeste) + dias * DIA_MS) };
+  else if (acao === 'dar_pago') upd = { pago_ate: iso(Math.max(agora, pagoAte) + dias * DIA_MS) };
+  else if (acao === 'encerrar_teste') upd = { teste_ate: iso(agora - 1000) };
+  else if (acao === 'encerrar_pago') upd = { pago_ate: null };
+  else if (acao === 'liberar_total') upd = { liberado: true };
+  else upd = { liberado: false };
+
+  exige(await db.from('aparelhos').update(upd).eq('device_id', id));
+  cacheAp.delete(id);
+  await registrarHistorico(id, acao, dias, motivo);
+  res.json({ ok: true });
+}));
+
+router.get(`${API}/cliente/:id/historico`, ...protegido, rota(async (req, res) => {
+  if (!idValido(req.params.id)) throw falha(400, 'device_id inválido.');
+  res.json(exige(await db.from('historico_admin').select('criado_em, acao, dias, motivo')
+    .eq('device_id', req.params.id).order('criado_em', { ascending: false }).limit(30)));
+}));
+
+router.get(`${API}/acessos`, ...protegido, rota(async (req, res) => {
+  res.json(exige(await db.from('acessos').select('*').order('criado_em', { ascending: false }).limit(limiteConsulta(req))));
+}));
+
+router.get(`${API}/pagamentos`, ...protegido, rota(async (req, res) => {
+  res.json(exige(await db.from('pagamentos').select('*').order('criado_em', { ascending: false }).limit(limiteConsulta(req))));
+}));
+
+router.post(`${API}/reconciliar`, limiteIp('mon', 20), requerAdmin, rota(async (req, res) => {
+  res.json({ ok: true, ...(await reconciliarPendentes()) });
+}));
+
+router.get(`${API}/aparelhos`, ...protegido, rota(async (req, res) => {
+  const sinc = exige(await db.from('sincronizacoes')
+    .select([
+      'device_id', 'versao', 'atualizado_em',
+      'usuario:dados->>usuario', 'cfg_usuario:dados->config->>usuario',
+      'email:dados->>email', 'cfg_email:dados->config->>email',
+      'telefone:dados->>telefone', 'cfg_telefone:dados->config->>telefone',
+    ].join(','))
+    .order('atualizado_em', { ascending: false })
+    .limit(limiteConsulta(req)));
+
+  const ids = sinc.map((s) => s.device_id);
+  const aps = ids.length
+    ? exige(await db.from('aparelhos')
+      .select('device_id, bloqueado, liberado, criado_em, pago_ate, teste_ate, motivo_bloqueio, bloqueado_em, ultimo_uso').in('device_id', ids))
+    : [];
+  const porId = new Map(aps.map((a) => [a.device_id, a]));
+
+  res.json(sinc.map((item) => {
+    const a = porId.get(item.device_id);
+    const teste = a ? infoTeste(a) : null;
+    return {
+      device_id: item.device_id,
+      versao: item.versao,
+      atualizado_em: item.atualizado_em,
+      bloqueado: !!a?.bloqueado,
+      teste_vencido: !!teste?.vencido,
+      liberado: !!a?.liberado,
+      motivo_bloqueio: a?.motivo_bloqueio || null,
+      bloqueado_em: a?.bloqueado_em || null,
+      criado_em: a?.criado_em || null,
+      teste_fim: teste?.fimTeste || null,
+      pago_ate: teste?.pagoAte || null,
+      dias_teste: diasAte(teste?.fimTeste),
+      dias_pago: diasAte(teste?.pagoAte),
+      online: !!a?.ultimo_uso && Date.now() - new Date(a.ultimo_uso).getTime() < 3 * 60000,
+      fase: teste?.fase || null,
+      vence_em: teste?.venceEm || null,
+      ultimo_uso: a?.ultimo_uso || null,
+      dias_restantes: teste?.liberado ? null : teste?.restantes ?? null,
+      usuario: item.usuario || item.cfg_usuario || 'Sem nome',
+      email: item.email || item.cfg_email || 'Sem email',
+      telefone: item.telefone || item.cfg_telefone || 'Sem telefone',
+    };
+  }));
+}));
+
+router.get(`${API}/aparelhos/:id`, ...protegido, rota(async (req, res) => {
+  if (!idValido(req.params.id)) throw falha(400, 'device_id inválido.');
+  const s = exige(await db.from('sincronizacoes').select('dados, versao, atualizado_em')
+    .eq('device_id', req.params.id).maybeSingle());
+  if (!s) throw falha(404, 'Aparelho sem dados sincronizados.');
+  res.json(s);
+}));
+
+module.exports = router;
