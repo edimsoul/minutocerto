@@ -223,6 +223,19 @@ function avaliar(m) {
 
 const uso = { base: new Map(), local: new Map(), sujos: new Set(), ultimo: Date.now(), carregado: false, gravando: false, persistente: null, erro: '' };
 
+function falhaUso(e) {
+  const msg = String((e && e.message) || e).slice(0, 200);
+  if (msg !== uso.erro) console.error('[uso] falha ao salvar horas:', msg);
+  uso.persistente = false;
+  uso.erro = msg;
+}
+
+function sucessoUso() {
+  if (uso.persistente !== true) console.log('[uso] horas do servidor sendo salvas no banco');
+  uso.persistente = true;
+  uso.erro = '';
+}
+
 const chaveDia = (t) => new Date(t - 3 * 3600000).toISOString().slice(0, 10);
 
 async function carregarUso() {
@@ -233,11 +246,8 @@ async function carregarUso() {
     uso.base.clear();
     for (const l of r.data || []) uso.base.set(l.dia, Number(l.ms) || 0);
     uso.carregado = true;
-    uso.persistente = true;
-    uso.erro = '';
   } catch (e) {
-    uso.persistente = false;
-    uso.erro = String((e && e.message) || e).slice(0, 120);
+    falhaUso(e);
   }
 }
 
@@ -259,11 +269,9 @@ async function registrarUso() {
       if (r.error) throw new Error(r.error.message);
       if (dia !== hoje) uso.sujos.delete(dia);
     }
-    uso.persistente = true;
-    uso.erro = '';
+    sucessoUso();
   } catch (e) {
-    uso.persistente = false;
-    uso.erro = String((e && e.message) || e).slice(0, 120);
+    falhaUso(e);
   } finally {
     uso.gravando = false;
   }
@@ -359,7 +367,7 @@ function iniciar(servidor) {
   setInterval(sondarBanco, 15000).unref();
   setInterval(registrarUso, 30000).unref();
   process.on('SIGTERM', () => { registrarUso(); });
-  carregarUso();
+  setTimeout(registrarUso, 5000).unref();
   sondarBanco();
   amostrar();
 }
