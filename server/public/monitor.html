@@ -116,6 +116,13 @@
   .grafico { background:var(--card); border:1px solid var(--linha); border-radius:10px; padding:12px 12px 8px; margin-bottom:18px; }
   .grafico svg { width:100%; height:auto; display:block; }
   .grafico .tabs { margin:0 0 6px; }
+  .uso { background:var(--card); border:1px solid var(--linha); border-radius:10px; padding:12px 14px; margin-bottom:18px; }
+  .uso-topo { display:flex; justify-content:space-between; align-items:baseline; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+  .uso-num { font-size:24px; font-weight:800; }
+  .uso-sub { font-size:13px; color:var(--suave); }
+  .uso .barra { margin-bottom:10px; }
+  .uso svg { width:100%; height:auto; display:block; }
+  .uso-aviso { color:var(--amarelo); font-size:12px; margin-top:6px; display:none; }
   @media (max-width: 900px) { .cards { grid-template-columns:repeat(2, 1fr); } .metricas { grid-template-columns:repeat(2, 1fr); } }
 
   @media (max-width: 600px) {
@@ -822,6 +829,13 @@ function montarSistema() {
           <div class="barra"><i id="mb-${id}"></i></div><div class="nota" id="mt-${id}"></div>
         </div>`).join('')}
     </div>
+    <h3>Horas de uso do servidor no mês</h3>
+    <div class="uso" id="m-uso">
+      <div class="uso-topo"><div class="uso-num" id="uso-num">—</div><div class="uso-sub" id="uso-sub"></div></div>
+      <div class="barra"><i id="uso-barra"></i></div>
+      <div id="uso-grafico"></div>
+      <div class="uso-aviso" id="uso-aviso"></div>
+    </div>
     <h3>Ao longo do tempo (últimos 15 minutos)</h3>
     <div class="grafico"><div class="tabs" id="sis-abas"></div><div id="sis-grafico"></div></div>`);
   $('sis-abas').replaceChildren(...Object.entries(SERIES).map(([k, [rot]]) => {
@@ -870,6 +884,58 @@ function desenharGrafico() {
   box.replaceChildren(svg);
 }
 
+function fmtH(v) {
+  return (Math.round(num(v) * 100) / 100).toFixed(2).replace('.', ',');
+}
+
+function desenharUso(u) {
+  if (!u) return;
+  const pct = Math.min(100, (u.totalH / u.limiteH) * 100);
+  const cor = corPct(pct, 70, 90);
+  const meses = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  const [ano, mes] = u.mes.split('-').map(Number);
+  $('uso-num').textContent = `${fmtH(u.totalH)} h / ${u.limiteH} h`;
+  const restam = Math.max(0, u.limiteH - u.totalH);
+  const mediaDia = u.hoje > 0 ? u.totalH / u.hoje : 0;
+  const projecao = mediaDia * u.diasNoMes;
+  $('uso-sub').textContent = `${meses[mes - 1]} de ${ano} · restam ${fmtH(restam)} h · projeção do mês ${fmtH(projecao)} h`;
+  const barra = $('uso-barra');
+  barra.style.width = pct + '%';
+  barra.style.background = cor;
+
+  const L = 30, R = 6, T = 8, B = 22, W = 700, H = 170;
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Horas de uso por dia' });
+  const y = (h) => T + (H - T - B) * (1 - h / 24);
+  [0, 12, 24].forEach((h) => {
+    svg.appendChild(svgEl('line', { x1: L, x2: W - R, y1: y(h), y2: y(h), stroke: '#e5e7eb', 'stroke-width': 1 }));
+    svg.appendChild(svgEl('text', { x: L - 5, y: y(h) + 4, 'text-anchor': 'end', 'font-size': 10, fill: '#6b7280' }, h + 'h'));
+  });
+  const largura = (W - L - R) / u.diasNoMes;
+  u.horas.forEach((h, i) => {
+    const dia = i + 1;
+    const x = L + i * largura;
+    const alt = Math.max(0, (H - T - B) * (Math.min(h, 24) / 24));
+    const ativo = dia === u.hoje;
+    if (h > 0) {
+      const r = svgEl('rect', { x: x + 1.5, y: y(Math.min(h, 24)), width: Math.max(1, largura - 3), height: alt, rx: 2, fill: ativo ? '#d97706' : '#2563eb' });
+      r.appendChild(svgEl('title', {}, `Dia ${dia}: ${fmtH(h)} h`));
+      svg.appendChild(r);
+    }
+    if (dia === 1 || dia % 5 === 0 || dia === u.diasNoMes) {
+      svg.appendChild(svgEl('text', { x: x + largura / 2, y: H - 6, 'text-anchor': 'middle', 'font-size': 10, fill: ativo ? '#d97706' : '#6b7280' }, String(dia)));
+    }
+  });
+  $('uso-grafico').replaceChildren(svg);
+
+  const aviso = $('uso-aviso');
+  if (u.persistente === false) {
+    aviso.textContent = 'O histórico não está sendo salvo no banco (' + (u.erro || 'erro desconhecido') + '). Rode o SQL da tabela uso_servidor no Supabase.';
+    aviso.style.display = 'block';
+  } else {
+    aviso.style.display = 'none';
+  }
+}
+
 function renderSistema(erro) {
   const cardEl = document.querySelector('.card[data-view="sistema"]');
   const banner = $('sis-banner');
@@ -906,6 +972,8 @@ function renderSistema(erro) {
   const corResp = n.respP95Ms >= 2000 ? COR_CRITICO : n.respP95Ms >= 800 ? COR_ATENCAO : COR_OK;
   metrica('resp', n.respP95Ms + ' ms', Math.min(100, (n.respP95Ms / 2000) * 100), corResp,
     `${n.erros5xx} erros do servidor · ${n.limitados} barrados (429) no último minuto`);
+
+  desenharUso(sis.uso);
 
   tabela('tb-sis-ips', [
     { t: 'IP', f: (i) => mono(i.ip) },

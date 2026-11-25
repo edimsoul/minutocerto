@@ -1,19 +1,17 @@
-// Coleta métricas do servidor para a aba "Sistema" do painel (/monitor).
-// Tudo fica na memória: nada é gravado no banco, só uma consulta leve de teste a cada 15 s.
 const os = require('os');
 const fs = require('fs');
 const { monitorEventLoopDelay } = require('perf_hooks');
 const db = require('./db');
 const { TRUST_PROXY } = require('./config');
 
-// Quantos pedidos por minuto o servidor aguenta (100% de "carga"). Ajuste no Render
-// com a variável CAPACIDADE_REQ_MIN depois de medir o seu plano.
 const CAPACIDADE = Number(process.env.CAPACIDADE_REQ_MIN) || 12000;
 
-const BUCKET_MS = 5000;   // janela de 1 minuto = 12 blocos de 5 s
+const LIMITE_HORAS = Number(process.env.USO_LIMITE_HORAS) || 750;
+
+const BUCKET_MS = 5000;
 const NB = 12;
 const MAX_IPS = 5000;
-const HIST_MAX = 180;     // 15 minutos de histórico (uma amostra a cada 5 s)
+const HIST_MAX = 180;
 const INICIO = Date.now();
 
 const idDe = (t) => Math.floor(t / BUCKET_MS);
@@ -48,7 +46,6 @@ function limiteMemoriaMb() {
 const NUCLEOS = limiteCpu();
 const MEM_LIMITE_MB = limiteMemoriaMb();
 
-// contador por janela deslizante de 1 minuto
 const janela = () => ({ ids: new Array(NB).fill(-1), n: new Array(NB).fill(0) });
 function incrementar(j, agora) {
   const id = idDe(agora);
@@ -66,11 +63,11 @@ function somar(j, agora) {
 const total = janela();
 const erros5xx = janela();
 const limitados = janela();
-const ips = new Map(); // ip -> { j, devs: Map(device -> ultimaVez), ultimo }
+const ips = new Map();
 let emAndamento = 0;
 let gravacoes = 0;
-const tempos = [];     // últimos tempos de resposta (ms)
-const historico = [];  // { t, carga, cpu, ram, db }
+const tempos = [];
+const historico = [];
 
 const banco = { ok: null, ultimo: 0, erro: '', amostras: [], falhasSeguidas: 0, aquecido: false };
 
@@ -88,7 +85,6 @@ function limparIps(agora, forcar) {
   }
 }
 
-// IP do cliente, do mesmo jeito que o Express faz com "trust proxy"
 function ipDe(req) {
   const saltos = typeof TRUST_PROXY === 'number' ? TRUST_PROXY : 1;
   const xff = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -132,7 +128,6 @@ function contar(req, res) {
   res.once('close', fim);
 }
 
-// CPU do processo em relação ao limite do plano (cgroup) ou aos núcleos da máquina
 let cpuAnt = process.cpuUsage();
 let tAnt = process.hrtime.bigint();
 let cpuPct = 0;
@@ -167,7 +162,6 @@ async function sondarBanco() {
     clearTimeout(temporizador);
   }
   banco.ultimo = Date.now() - t0;
-  // o 1º teste depois de ligar inclui DNS/TLS e conexão fria: não entra nas estatísticas
   if (banco.aquecido) {
     banco.amostras.push(banco.ultimo);
     if (banco.amostras.length > 20) banco.amostras.shift();
@@ -227,6 +221,82 @@ function avaliar(m) {
   return { nivel, motivos };
 }
 
+const uso = { base: new Map(), local: new Map(), sujos: new Set(), ultimo: Date.now(), carregado: false, gravando: false, persistente: null, erro: '' };
+
+const chaveDia = (t) => new Date(t - 3 * 3600000).toISOString().slice(0, 10);
+
+async function carregarUso() {
+  try {
+    const inicio = chaveDia(Date.now()).slice(0, 8) + '01';
+    const r = await db.from('uso_servidor').select('dia, ms').gte('dia', inicio);
+    if (r.error) throw new Error(r.error.message);
+    uso.base.clear();
+    for (const l of r.data || []) uso.base.set(l.dia, Number(l.ms) || 0);
+    uso.carregado = true;
+    uso.persistente = true;
+    uso.erro = '';
+  } catch (e) {
+    uso.persistente = false;
+    uso.erro = String((e && e.message) || e).slice(0, 120);
+  }
+}
+
+async function registrarUso() {
+  const agora = Date.now();
+  const decorrido = Math.min(Math.max(agora - uso.ultimo, 0), 300000);
+  uso.ultimo = agora;
+  const hoje = chaveDia(agora);
+  uso.local.set(hoje, (uso.local.get(hoje) || 0) + decorrido);
+  uso.sujos.add(hoje);
+  if (uso.gravando) return;
+  uso.gravando = true;
+  try {
+    if (!uso.carregado) await carregarUso();
+    if (!uso.carregado) return;
+    for (const dia of [...uso.sujos]) {
+      const ms = (uso.base.get(dia) || 0) + (uso.local.get(dia) || 0);
+      const r = await db.from('uso_servidor').upsert({ dia, ms, atualizado_em: new Date().toISOString() }, { onConflict: 'dia' });
+      if (r.error) throw new Error(r.error.message);
+      if (dia !== hoje) uso.sujos.delete(dia);
+    }
+    uso.persistente = true;
+    uso.erro = '';
+  } catch (e) {
+    uso.persistente = false;
+    uso.erro = String((e && e.message) || e).slice(0, 120);
+  } finally {
+    uso.gravando = false;
+  }
+}
+
+function usoAtual(agora) {
+  const hoje = chaveDia(agora);
+  const [ano, mes] = hoje.split('-').map(Number);
+  const diasNoMes = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+  const pendente = Math.min(Math.max(agora - uso.ultimo, 0), 300000);
+  const horas = [];
+  let totalMs = 0;
+  for (let d = 1; d <= diasNoMes; d++) {
+    const k = `${ano}-${String(mes).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    let ms = (uso.base.get(k) || 0) + (uso.local.get(k) || 0) + (k === hoje ? pendente : 0);
+    ms = Math.min(ms, 86400000);
+    totalMs += ms;
+    horas.push(Math.round((ms / 3600000) * 100) / 100);
+  }
+  return {
+    mes: `${ano}-${String(mes).padStart(2, '0')}`,
+    diasNoMes,
+    hoje: Number(hoje.slice(8)),
+    limiteH: LIMITE_HORAS,
+    totalH: Math.round((totalMs / 3600000) * 100) / 100,
+    horas,
+    persistente: uso.persistente,
+    erro: uso.erro,
+  };
+}
+
+let iniciado = false;
+
 function snapshot() {
   const agora = Date.now();
   const carga = cargaAtual(agora);
@@ -273,12 +343,12 @@ function snapshot() {
     loop: { p99Ms: Math.round(atrasoP99) },
     ips: lista.slice(0, 30),
     historico: historico.map((h) => [h.t, h.carga, h.cpu, h.ram, h.db]),
+    uso: usoAtual(agora),
   };
   m.status = avaliar(m);
   return m;
 }
 
-let iniciado = false;
 function iniciar(servidor) {
   if (iniciado) return;
   iniciado = true;
@@ -287,6 +357,9 @@ function iniciar(servidor) {
   setInterval(amostrar, 5000).unref();
   setInterval(() => limparIps(Date.now(), false), 30000).unref();
   setInterval(sondarBanco, 15000).unref();
+  setInterval(registrarUso, 30000).unref();
+  process.on('SIGTERM', () => { registrarUso(); });
+  carregarUso();
   sondarBanco();
   amostrar();
 }
